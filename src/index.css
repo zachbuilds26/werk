@@ -1804,13 +1804,17 @@ h2.display {
 /* ---- workspace setup ---- */
 .cx__setup-screen {
   flex: 1;
-  display: grid;
-  place-items: center;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
   padding: clamp(1.5rem, 5vw, 4rem) clamp(16px, 4vw, 28px);
 }
 .cx__setup-card {
   width: 100%;
   max-width: 940px;
+  margin-block: auto;
   padding: clamp(22px, 4vw, 34px);
   border: 1.5px solid var(--line-2);
   border-radius: 24px;
