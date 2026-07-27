@@ -1,14 +1,13 @@
-// Shared shapes for the werk API. The plan endpoint decides which assets a
-// request needs; the draft endpoint fills one asset with structured content;
-// the render endpoint turns that content into a real file.
+// Shared domain shapes for the WERK API. Model output is converted to these
+// structures before it reaches the UI or an export renderer.
 
 export type AssetKind =
-  | "deck" // a board / pitch / review presentation (slides)
-  | "document" // an executive summary, report, or brief (headed prose)
-  | "sheet" // a financial model, budget, or spreadsheet (a table)
-  | "agenda" // a meeting agenda (time, topic, owner)
-  | "actions" // an action-items list (task, owner, due)
-  | "timeline"; // a project timeline or roadmap (phase, window, detail)
+  | "deck"
+  | "document"
+  | "sheet"
+  | "agenda"
+  | "actions"
+  | "timeline";
 
 export const ASSET_KINDS: readonly AssetKind[] = [
   "deck",
@@ -19,41 +18,95 @@ export const ASSET_KINDS: readonly AssetKind[] = [
   "timeline",
 ];
 
-export interface PlanAsset {
-  /** Client-side key, assigned by the server (a1, a2, ...). */
+export type RenderFormat = "md" | "pdf" | "pptx" | "xlsx";
+
+export type EvidenceSource = "user" | "workspace" | "clarification" | "assumption";
+
+export interface EvidenceItem {
+  id: string;
+  label: string;
+  value: string;
+  source: EvidenceSource;
+  sourceDetail: string;
+}
+
+export interface ContextPack {
+  request: string;
+  workspace: WorkspaceContext;
+  evidence: EvidenceItem[];
+  gaps: string[];
+  assumptionMode: "ask" | "illustrative";
+}
+
+export interface AssetPlan {
+  /** Client key assigned by the server. */
   id: string;
   kind: AssetKind;
   title: string;
   summary: string;
+  purpose: string;
+  audience: string;
+  decision: string;
+  requiredAnalysis: string[];
+  acceptanceCriteria: string[];
+  evidenceIds: string[];
+  dependencies: string[];
+}
+
+/** Retained for code that imports the previous name. */
+export type PlanAsset = AssetPlan;
+
+export interface PackageBrief {
+  objective: string;
+  audience: string;
+  decision: string;
+  timing: string;
+  sharedTerms: string[];
+  consistencyRules: string[];
 }
 
 export interface PackagePlan {
-  /** Short label for the whole package, e.g. "Board pack". */
   packageName: string;
-  /** Concrete name derived from the request, e.g. "Q3 board review". */
   packageTitle: string;
-  /** One short sentence in WERK's voice. */
   reply: string;
-  assets: PlanAsset[];
+  brief: PackageBrief;
+  assets: AssetPlan[];
 }
 
-/** One targeted question asked before a package is built. */
 export interface ClarifyQuestion {
-  /** Short slug used as the client-side key for the answer, e.g. "audience". */
   key: string;
-  /** One-sentence question shown to the user. */
   question: string;
-  /** Optional example answer shown as the input placeholder. */
   placeholder?: string;
+  required?: boolean;
 }
 
-/** Result of the clarify step: either ask questions, or signal "ready". */
 export interface ClarifyResult {
   mode: "clarify" | "ready";
-  /** When clarifying, a friendly line saying a few details are needed. */
   reply: string;
-  /** Questions to ask; empty when mode is "ready". */
   questions: ClarifyQuestion[];
+}
+
+export interface WorkspaceContext {
+  organizationName: string;
+  organizationDescription: string;
+  workspacePurpose: string;
+  defaultAudience?: string;
+  toneAndConstraints?: string;
+  additionalContext?: string;
+}
+
+export interface WorkspaceRequestPayload {
+  request: string;
+  workspaceContext: WorkspaceContext;
+  assumptionMode?: "ask" | "illustrative";
+}
+
+export interface DraftRequestPayload extends WorkspaceRequestPayload {
+  kind: AssetKind;
+  title: string;
+  assetPlan?: AssetPlan;
+  revisionInstruction?: string;
+  previousDraft?: AssetDraft;
 }
 
 export interface Slide {
@@ -90,6 +143,21 @@ export interface TimelinePhase {
   detail: string;
 }
 
+export interface QualityIssue {
+  code: string;
+  message: string;
+  severity: "error" | "warning";
+  path?: string;
+}
+
+export interface DraftMetadata {
+  evidenceIds: string[];
+  assumptions: string[];
+  gaps: string[];
+  quality: QualityIssue[];
+  revision: number;
+}
+
 export interface AssetDraft {
   kind: AssetKind;
   title: string;
@@ -100,6 +168,15 @@ export interface AssetDraft {
   agenda?: AgendaItem[];
   actions?: ActionItem[];
   timeline?: TimelinePhase[];
+  metadata?: DraftMetadata;
 }
 
-export type RenderFormat = "md" | "pdf" | "pptx" | "xlsx";
+export type GenerateEvent =
+  | { type: "job-started"; jobId: string; sequence: number }
+  | { type: "plan"; jobId: string; sequence: number; plan: PackagePlan }
+  | { type: "asset-status"; jobId: string; sequence: number; id: string; status: "queued" | "drafting" | "verifying" | "revising" }
+  | { type: "quality-warning"; jobId: string; sequence: number; id: string; issues: QualityIssue[] }
+  | { type: "draft"; jobId: string; sequence: number; id: string; draft: AssetDraft }
+  | { type: "draft-error"; jobId: string; sequence: number; id: string; message: string }
+  | { type: "done"; jobId: string; sequence: number }
+  | { type: "error"; jobId: string; sequence: number; message: string };

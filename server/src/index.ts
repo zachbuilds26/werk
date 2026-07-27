@@ -1,450 +1,386 @@
-// WERK API — Express server on port 8787 (the Vite dev proxy target).
-//
-// Endpoints:
-//   GET  /api/health        -> { ok, groq }
-//   POST /api/clarify       { request } -> ClarifyResult (ask, or ready)
-//   POST /api/plan          { request } -> PackagePlan
-//   POST /api/draft         { kind, title, request } -> AssetDraft
-//   POST /api/render        { draft, format } -> binary file (attachment)
-//   POST /api/generate      { request } -> text/event-stream of plan + drafts
-//
-// The generate stream is the main path the workspace uses: one connection,
-// the plan first, then each asset drafted in turn (gentler on the Groq free
-// tier than fanning out six calls at once), then done.
+// WERK API. The server owns request validation, generation quality gates, and
+// render exports. The browser only receives drafts that meet the same domain
+// rules used by the download routes.
 
 import "dotenv/config";
-import express from "express";
-import cors from "cors";
-import JSZip from "jszip";
+import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import cors from "cors";
+import express from "express";
+import JSZip from "jszip";
 import { groqJson, hasGroqKey } from "./groq.js";
+import { ASSET_SPECS } from "./asset-specs.js";
 import { PLAN_SYSTEM, DRAFT_SYSTEM, CLARIFY_SYSTEM } from "./prompts.js";
+import { qualityErrors, validateDraftQuality } from "./quality.js";
 import { renderDraft } from "./render.js";
+import {
+  assetDraftSchema,
+  draftRequestSchema,
+  packageRequestSchema,
+  renderRequestSchema,
+  requestPayloadSchema,
+  validationDetails,
+} from "./schemas.js";
+import {
+  buildWorkspaceRequest,
+  stripWorkspaceContextBlock,
+} from "./workspace.js";
 import type {
   AssetDraft,
   AssetKind,
+  AssetPlan,
   ClarifyQuestion,
   ClarifyResult,
+  PackageBrief,
   PackagePlan,
-  PlanAsset,
+  QualityIssue,
   RenderFormat,
+  WorkspaceContext,
 } from "./types.js";
 
 const PORT = Number(process.env.PORT) || 8787;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// Output token limits per call. Drafts get enough room for complete working
-// assets, then run sequentially so the Groq free tier is not hit in a burst.
 const MAX_TOKENS_CLARIFY = 1000;
-const MAX_TOKENS_PLAN = 1400;
+const MAX_TOKENS_PLAN = 1800;
 const MAX_TOKENS_DRAFT = 5200;
-
-// Pace between sequential drafts in /api/generate. The Groq free tier enforces
-// a tight per-minute token limit, so a full 6-asset package must spread its
-// drafts out; the 429 retry in groq.ts backstops any remaining overages.
 const DRAFT_PACE_MS = 18000;
+const REQUEST_MAX_CHARS = 6000;
+const VALID_KINDS = new Set<AssetKind>(["deck", "document", "sheet", "agenda", "actions", "timeline"]);
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
-/* ---------- validation ---------- */
-const VALID_KINDS = new Set<AssetKind>([
-  "deck",
-  "document",
-  "sheet",
-  "agenda",
-  "actions",
-  "timeline",
-]);
-
-function asString(v: unknown, max = 400): string {
-  const s = typeof v === "string" ? v : String(v ?? "");
-  return s.slice(0, max);
+function asString(value: unknown, max: number): string {
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 
-/** Coerce a raw Groq plan object into a trusted PackagePlan, assigning ids. */
-function coercePlan(raw: unknown, request: string): PackagePlan {
+function textList(value: unknown, maxItems: number, maxLength: number): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => asString(item, maxLength)).filter(Boolean).slice(0, maxItems)
+    : [];
+}
+
+function requestSummary(request: string): string {
+  const latest = request.match(/New user message:\s*([\s\S]*)/i)?.[1]?.trim() ?? request.trim();
+  return latest.split("\n")[0].trim().slice(0, 120) || "New package";
+}
+
+function invalid(res: express.Response, error: { issues: unknown[] }): void {
+  res.status(400).json({ error: "Invalid request", details: validationDetails(error as never) });
+}
+
+function coerceClarify(raw: unknown): ClarifyResult {
   const obj = (raw ?? {}) as Record<string, unknown>;
-  const assetsRaw = Array.isArray(obj.assets) ? obj.assets : [];
-  const assets: PlanAsset[] = assetsRaw
-    .map((a) => {
-      const o = (a ?? {}) as Record<string, unknown>;
-      const kind = asString(o.kind, 20) as AssetKind;
+  const mode: ClarifyResult["mode"] = obj.mode === "clarify" ? "clarify" : "ready";
+  const questions: ClarifyQuestion[] = mode === "clarify" && Array.isArray(obj.questions)
+    ? obj.questions.map((item) => {
+      const question = (item ?? {}) as Record<string, unknown>;
+      return {
+        key: asString(question.key, 30).replace(/\s+/g, "-").toLowerCase() || "detail",
+        question: asString(question.question, 200),
+        placeholder: asString(question.placeholder, 120) || undefined,
+        required: Boolean(question.required),
+      };
+    }).filter((question) => question.question).slice(0, 4)
+    : [];
+
+  if (mode === "clarify" && questions.length === 0) return { mode: "ready", reply: "", questions: [] };
+  return { mode, reply: asString(obj.reply, 240), questions };
+}
+
+function coercePlan(raw: unknown, request: string, workspace: WorkspaceContext): PackagePlan {
+  const obj = (raw ?? {}) as Record<string, unknown>;
+  const rawBrief = (obj.brief ?? {}) as Record<string, unknown>;
+  const objective = asString(rawBrief.objective, 320) || requestSummary(request);
+  const defaultAudience = workspace.defaultAudience || "Leadership team";
+  const brief: PackageBrief = {
+    objective,
+    audience: asString(rawBrief.audience, 180) || defaultAudience,
+    decision: asString(rawBrief.decision, 320) || "Confirm the recommended direction, owners, and next steps.",
+    timing: asString(rawBrief.timing, 180) || "Timing to be confirmed with the request owner.",
+    sharedTerms: textList(rawBrief.sharedTerms, 12, 100),
+    consistencyRules: textList(rawBrief.consistencyRules, 12, 180),
+  };
+
+  const assets: AssetPlan[] = (Array.isArray(obj.assets) ? obj.assets : [])
+    .map((item) => {
+      const asset = (item ?? {}) as Record<string, unknown>;
+      const kind = asString(asset.kind, 20) as AssetKind;
       if (!VALID_KINDS.has(kind)) return null;
+      const summary = asString(asset.summary, 300) || `Decision-ready ${kind} for ${objective}.`;
       return {
         id: "",
         kind,
-        title: asString(o.title, 120) || "Untitled",
-        summary: asString(o.summary, 240),
-      } as PlanAsset;
+        title: asString(asset.title, 180) || `${workspace.organizationName} ${kind}`,
+        summary,
+        purpose: asString(asset.purpose, 360) || summary,
+        audience: asString(asset.audience, 180) || brief.audience,
+        decision: asString(asset.decision, 320) || brief.decision,
+        requiredAnalysis: textList(asset.requiredAnalysis, 8, 280).length
+          ? textList(asset.requiredAnalysis, 8, 280)
+          : ["Use the request evidence, explain its implication, and make the next decision clear."],
+        acceptanceCriteria: textList(asset.acceptanceCriteria, 8, 280).length
+          ? textList(asset.acceptanceCriteria, 8, 280)
+          : [ASSET_SPECS[kind].promptRequirement],
+        evidenceIds: textList(asset.evidenceIds, 24, 80),
+        dependencies: textList(asset.dependencies, 8, 180),
+      };
     })
-    .filter((a): a is PlanAsset => a !== null)
+    .filter((asset): asset is AssetPlan => asset !== null)
     .slice(0, 6)
-    .map((a, i) => ({ ...a, id: `a${i + 1}` }));
+    .map((asset, index) => ({ ...asset, id: `a${index + 1}` }));
 
-  const packageName = asString(obj.packageName, 60) || "Package";
-  const packageTitle = asString(obj.packageTitle, 120) || request.slice(0, 60) || "Untitled";
-  const reply = asString(obj.reply, 200) || "On it — assembling your package.";
-
-  return { packageName, packageTitle, reply, assets };
+  return {
+    packageName: asString(obj.packageName, 80) || "Package",
+    packageTitle: asString(obj.packageTitle, 180) || requestSummary(request),
+    reply: asString(obj.reply, 280) || "I’m assembling the package now.",
+    brief,
+    assets,
+  };
 }
 
-/** Coerce a raw Groq draft into a trusted AssetDraft of the requested kind. */
 function coerceDraft(raw: unknown, kind: AssetKind, title: string): AssetDraft {
   const obj = (raw ?? {}) as Record<string, unknown>;
-  const blurb = asString(obj.blurb, 320);
-  const strArr = (v: unknown): string[] =>
-    Array.isArray(v) ? v.map((x) => asString(x, 300)).filter(Boolean) : [];
-
-  const draft: AssetDraft = { kind, title, blurb };
+  const draft: AssetDraft = {
+    kind,
+    title,
+    blurb: asString(obj.blurb, 700),
+  };
 
   switch (kind) {
-    case "deck": {
-      draft.slides = (Array.isArray(obj.slides) ? obj.slides : [])
-        .map((s) => {
-          const o = (s ?? {}) as Record<string, unknown>;
-          return {
-            eyebrow: asString(o.eyebrow, 60),
-            title: asString(o.title, 160),
-            bullets: strArr(o.bullets),
-          };
-        })
-        .filter((s) => s.title || s.bullets.length)
-        .slice(0, 20);
+    case "deck":
+      draft.slides = (Array.isArray(obj.slides) ? obj.slides : []).map((item) => {
+        const slide = (item ?? {}) as Record<string, unknown>;
+        return {
+          eyebrow: asString(slide.eyebrow, 80),
+          title: asString(slide.title, 220),
+          bullets: textList(slide.bullets, 6, 500),
+        };
+      }).filter((slide) => slide.title || slide.bullets.length).slice(0, 18);
       break;
-    }
-    case "document": {
-      draft.sections = (Array.isArray(obj.sections) ? obj.sections : [])
-        .map((s) => {
-          const o = (s ?? {}) as Record<string, unknown>;
-          return { heading: asString(o.heading, 160), body: strArr(o.body) };
-        })
-        .filter((s) => s.heading || s.body.length)
-        .slice(0, 20);
+    case "document":
+      draft.sections = (Array.isArray(obj.sections) ? obj.sections : []).map((item) => {
+        const section = (item ?? {}) as Record<string, unknown>;
+        return { heading: asString(section.heading, 220), body: textList(section.body, 3, 1400) };
+      }).filter((section) => section.heading || section.body.length).slice(0, 10);
       break;
-    }
     case "sheet": {
-      const t = (obj.table ?? {}) as Record<string, unknown>;
-      const columns = strArr(t.columns);
-      const rows = Array.isArray(t.rows)
-        ? (t.rows as unknown[])
-            .map((r) => (Array.isArray(r) ? r.map((c) => asString(c, 120)) : []))
-            .slice(0, 40)
+      const table = (obj.table ?? {}) as Record<string, unknown>;
+      const columns = textList(table.columns, 10, 120);
+      const rows = Array.isArray(table.rows)
+        ? table.rows.map((row) => Array.isArray(row) ? row.map((cell) => asString(cell, 180)) : []).slice(0, 24)
         : [];
       if (columns.length) draft.table = { columns, rows };
       break;
     }
-    case "agenda": {
-      draft.agenda = (Array.isArray(obj.agenda) ? obj.agenda : [])
-        .map((a) => {
-          const o = (a ?? {}) as Record<string, unknown>;
-          return {
-            time: asString(o.time, 40),
-            topic: asString(o.topic, 160),
-            owner: asString(o.owner, 80),
-          };
-        })
-        .slice(0, 20);
+    case "agenda":
+      draft.agenda = (Array.isArray(obj.agenda) ? obj.agenda : []).map((item) => {
+        const agenda = (item ?? {}) as Record<string, unknown>;
+        return { time: asString(agenda.time, 48), topic: asString(agenda.topic, 240), owner: asString(agenda.owner, 100) };
+      }).slice(0, 12);
       break;
-    }
-    case "actions": {
-      draft.actions = (Array.isArray(obj.actions) ? obj.actions : [])
-        .map((a) => {
-          const o = (a ?? {}) as Record<string, unknown>;
-          return {
-            task: asString(o.task, 200),
-            owner: asString(o.owner, 80),
-            due: asString(o.due, 40),
-          };
-        })
-        .slice(0, 25);
+    case "actions":
+      draft.actions = (Array.isArray(obj.actions) ? obj.actions : []).map((item) => {
+        const action = (item ?? {}) as Record<string, unknown>;
+        return { task: asString(action.task, 300), owner: asString(action.owner, 100), due: asString(action.due, 80) };
+      }).slice(0, 16);
       break;
-    }
-    case "timeline": {
-      draft.timeline = (Array.isArray(obj.timeline) ? obj.timeline : [])
-        .map((p) => {
-          const o = (p ?? {}) as Record<string, unknown>;
-          return {
-            phase: asString(o.phase, 120),
-            window: asString(o.window, 60),
-            detail: asString(o.detail, 240),
-          };
-        })
-        .slice(0, 20);
+    case "timeline":
+      draft.timeline = (Array.isArray(obj.timeline) ? obj.timeline : []).map((item) => {
+        const phase = (item ?? {}) as Record<string, unknown>;
+        return { phase: asString(phase.phase, 160), window: asString(phase.window, 100), detail: asString(phase.detail, 900) };
+      }).slice(0, 10);
       break;
-    }
   }
 
-  return draft;
+  const parsed = assetDraftSchema.safeParse(draft);
+  if (!parsed.success) throw new Error("The model returned a malformed draft.");
+  return parsed.data;
 }
 
-function wordCount(value: string): number {
-  return value.trim().split(/\s+/).filter(Boolean).length;
-}
-
-function isDetailed(value: string, minWords: number): boolean {
-  return wordCount(value) >= minWords;
-}
-
-/** Reject syntactically valid but skeletal model responses before they reach the UI. */
-function draftDepthIssues(draft: AssetDraft): string[] {
-  const issues: string[] = [];
-  if (!isDetailed(draft.blurb, 12)) issues.push("a substantive summary");
-
-  switch (draft.kind) {
-    case "deck": {
-      const slides = draft.slides ?? [];
-      if (slides.length < 12) issues.push("at least 12 slides");
-      if (slides.some((slide, index) => !slide.eyebrow || !isDetailed(slide.title, 3))) {
-        issues.push("a complete section tag and claim headline on every slide");
-      }
-      if (slides.some((slide, index) => slide.bullets.length < (index === 0 ? 1 : 4))) {
-        issues.push("the required detailed bullets on every slide");
-      }
-      break;
-    }
-    case "document": {
-      const sections = draft.sections ?? [];
-      if (sections.length < 6) issues.push("at least 6 report sections");
-      if (sections.some((section) => !section.heading || section.body.length < 2)) {
-        issues.push("a heading and two paragraphs in every report section");
-      }
-      if (sections.some((section) => section.body.some((paragraph) => !isDetailed(paragraph, 20)))) {
-        issues.push("analytical paragraphs with complete detail");
-      }
-      break;
-    }
-    case "sheet": {
-      const table = draft.table;
-      if (!table || table.columns.length < 6 || table.rows.length < 12) {
-        issues.push("a table with at least 6 columns and 12 rows");
-      } else if (table.rows.some((row) => row.length !== table.columns.length || row.some((cell) => !cell.trim()))) {
-        issues.push("a complete value in every table cell");
-      }
-      break;
-    }
-    case "agenda": {
-      const agenda = draft.agenda ?? [];
-      if (agenda.length < 6) issues.push("at least 6 agenda items");
-      if (agenda.some((item) => !item.time || !item.owner || !isDetailed(item.topic, 4))) {
-        issues.push("a specific timed topic and owner for every agenda item");
-      }
-      break;
-    }
-    case "actions": {
-      const actions = draft.actions ?? [];
-      if (actions.length < 8) issues.push("at least 8 action items");
-      if (actions.some((item) => !item.owner || !item.due || !isDetailed(item.task, 5))) {
-        issues.push("a detailed task, owner, and due date for every action");
-      }
-      break;
-    }
-    case "timeline": {
-      const timeline = draft.timeline ?? [];
-      if (timeline.length < 5) issues.push("at least 5 timeline phases");
-      if (timeline.some((phase) => !phase.phase || !phase.window || !isDetailed(phase.detail, 18))) {
-        issues.push("a complete phase, time window, and detailed delivery criteria");
-      }
-      break;
-    }
-  }
-
-  return issues;
-}
-
-function draftRequest(kind: AssetKind, title: string, request: string, issues: string[] = []): string {
-  const retryInstruction = issues.length
-    ? `\n\nQUALITY GATE RETRY: Your prior response was incomplete. Regenerate the entire asset, not a patch. It must include ${issues.join(", ")}. Do not shorten any other required content to fit these requirements.`
+function draftPrompt(
+  request: string,
+  asset: AssetPlan,
+  revisionInstruction?: string,
+  qualityIssues: QualityIssue[] = [],
+): string {
+  const retry = qualityIssues.length
+    ? `\n\nQUALITY GATE: Regenerate the complete asset. Fix these defects: ${qualityIssues.map((issue) => issue.message).join(" ")}`
     : "";
-  return `Kind: ${kind}\nTitle: ${title}\nRequest: ${request}${retryInstruction}`;
+  const revision = revisionInstruction ? `\nRevision instruction: ${revisionInstruction}` : "";
+  return [
+    `Kind: ${asset.kind}`,
+    `Title: ${asset.title}`,
+    `Asset purpose: ${asset.purpose}`,
+    `Audience: ${asset.audience}`,
+    `Decision or outcome: ${asset.decision}`,
+    `Required analysis: ${asset.requiredAnalysis.join(" | ")}`,
+    `Acceptance criteria: ${asset.acceptanceCriteria.join(" | ")}`,
+    `Request: ${request}`,
+  ].join("\n") + revision + retry;
 }
 
-async function generateDeepDraft(kind: AssetKind, title: string, request: string): Promise<AssetDraft> {
-  let raw = await groqJson(DRAFT_SYSTEM, draftRequest(kind, title, request), MAX_TOKENS_DRAFT);
-  let draft = coerceDraft(raw, kind, title);
-  let issues = draftDepthIssues(draft);
+async function generateDeepDraft(
+  request: string,
+  asset: AssetPlan,
+  revisionInstruction?: string,
+  previousDraft?: AssetDraft,
+  onStage?: (stage: "verifying" | "revising") => void,
+): Promise<AssetDraft> {
+  const revision = (previousDraft?.metadata?.revision ?? 0) + 1;
+  const assess = (raw: unknown): { draft?: AssetDraft; issues: QualityIssue[] } => {
+    try {
+      const draft = coerceDraft(raw, asset.kind, asset.title);
+      return { draft, issues: validateDraftQuality(draft) };
+    } catch {
+      return {
+        issues: [{
+          code: "malformed-draft",
+          message: "Return every required field with valid, non-empty content in the required JSON structure.",
+          severity: "error",
+        }],
+      };
+    }
+  };
 
-  if (issues.length === 0) return draft;
+  let raw = await groqJson(DRAFT_SYSTEM, draftPrompt(request, asset, revisionInstruction), MAX_TOKENS_DRAFT);
+  let candidate = assess(raw);
 
-  raw = await groqJson(DRAFT_SYSTEM, draftRequest(kind, title, request, issues), MAX_TOKENS_DRAFT);
-  draft = coerceDraft(raw, kind, title);
-  issues = draftDepthIssues(draft);
-
-  if (issues.length) {
-    throw new Error(`The generated ${kind} did not meet Werk's depth standard: ${issues.join(", ")}`);
+  if (qualityErrors(candidate.issues).length > 0) {
+    onStage?.("verifying");
+    onStage?.("revising");
+    raw = await groqJson(DRAFT_SYSTEM, draftPrompt(request, asset, revisionInstruction, candidate.issues), MAX_TOKENS_DRAFT);
+    candidate = assess(raw);
   }
 
-  return draft;
-}
-
-/** Coerce a raw Groq clarify object into a trusted ClarifyResult. */
-function coerceClarify(raw: unknown): ClarifyResult {
-  const obj = (raw ?? {}) as Record<string, unknown>;
-  const mode: ClarifyResult["mode"] = obj.mode === "clarify" ? "clarify" : "ready";
-  const reply = asString(obj.reply, 200);
-
-  const questions: ClarifyQuestion[] =
-    mode === "clarify" && Array.isArray(obj.questions)
-      ? (obj.questions as unknown[])
-          .map((q) => {
-            const o = (q ?? {}) as Record<string, unknown>;
-            const key = asString(o.key, 30).replace(/\s+/g, "-").toLowerCase() || "q";
-            const question = asString(o.question, 200);
-            const placeholder = asString(o.placeholder, 120);
-            return { key, question, placeholder: placeholder || undefined } as ClarifyQuestion;
-          })
-          .filter((q) => q.question)
-          .slice(0, 4)
-      : [];
-
-  // If the model said "clarify" but produced no usable questions, treat as ready
-  // so the client proceeds instead of stalling on an empty form.
-  if (mode === "clarify" && questions.length === 0) {
-    return { mode: "ready", reply: "", questions: [] };
+  onStage?.("verifying");
+  const failures = qualityErrors(candidate.issues);
+  if (!candidate.draft || failures.length > 0) {
+    throw new Error(`The generated ${asset.kind} did not meet Werk’s quality standard: ${failures.map((issue) => issue.message).join(" ")}`);
   }
-  return { mode, reply, questions };
+
+  candidate.draft.metadata = {
+    evidenceIds: asset.evidenceIds,
+    assumptions: candidate.draft.blurb.includes("Figures are illustrative starting points")
+      ? ["Figures are illustrative starting points; replace with your actuals."]
+      : [],
+    gaps: [],
+    quality: candidate.issues,
+    revision,
+  };
+  return candidate.draft;
 }
 
-/* ---------- routes ---------- */
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, groq: hasGroqKey() });
 });
 
-/* ---------- clarify (run before planning) ---------- */
 app.post("/api/clarify", async (req, res) => {
-  const request = asString(req.body?.request, 2000).trim();
-  if (!request) return res.status(400).json({ error: "request is required" });
+  const parsed = requestPayloadSchema.safeParse(req.body);
+  if (!parsed.success) return invalid(res, parsed.error);
   if (!hasGroqKey()) return res.status(503).json({ error: "No Groq key set on the server" });
   try {
-    const raw = await groqJson(CLARIFY_SYSTEM, request, MAX_TOKENS_CLARIFY);
+    const request = parsed.data.request.slice(0, REQUEST_MAX_CHARS);
+    const modelRequest = buildWorkspaceRequest(parsed.data.workspaceContext, request);
+    const raw = await groqJson(CLARIFY_SYSTEM, modelRequest, MAX_TOKENS_CLARIFY);
     res.json(coerceClarify(raw));
-  } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : "clarify failed" });
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : "Clarification failed" });
   }
 });
 
 app.post("/api/plan", async (req, res) => {
-  const request = asString(req.body?.request, 2000).trim();
-  if (!request) return res.status(400).json({ error: "request is required" });
+  const parsed = requestPayloadSchema.safeParse(req.body);
+  if (!parsed.success) return invalid(res, parsed.error);
   if (!hasGroqKey()) return res.status(503).json({ error: "No Groq key set on the server" });
   try {
-    const raw = await groqJson(PLAN_SYSTEM, request, MAX_TOKENS_PLAN);
-    res.json(coercePlan(raw, request));
-  } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : "plan failed" });
+    const request = parsed.data.request.slice(0, REQUEST_MAX_CHARS);
+    const modelRequest = buildWorkspaceRequest(parsed.data.workspaceContext, request);
+    const raw = await groqJson(PLAN_SYSTEM, modelRequest, MAX_TOKENS_PLAN);
+    res.json(coercePlan(raw, stripWorkspaceContextBlock(request), parsed.data.workspaceContext));
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : "Planning failed" });
   }
 });
 
 app.post("/api/draft", async (req, res) => {
-  const kind = asString(req.body?.kind, 20) as AssetKind;
-  const title = asString(req.body?.title, 120);
-  const request = asString(req.body?.request, 2000);
-  if (!VALID_KINDS.has(kind)) return res.status(400).json({ error: "bad kind" });
-  if (!title) return res.status(400).json({ error: "title is required" });
+  const parsed = draftRequestSchema.safeParse(req.body);
+  if (!parsed.success) return invalid(res, parsed.error);
   if (!hasGroqKey()) return res.status(503).json({ error: "No Groq key set on the server" });
   try {
-    res.json(await generateDeepDraft(kind, title, request));
-  } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : "draft failed" });
+    const payload = parsed.data;
+    const request = buildWorkspaceRequest(payload.workspaceContext, payload.request.slice(0, REQUEST_MAX_CHARS));
+    const asset: AssetPlan = payload.assetPlan ?? {
+      id: "single",
+      kind: payload.kind,
+      title: payload.title,
+      summary: payload.title,
+      purpose: payload.title,
+      audience: payload.workspaceContext.defaultAudience || "Leadership team",
+      decision: "Deliver a decision-ready asset.",
+      requiredAnalysis: ["Use the request evidence and make the next action clear."],
+      acceptanceCriteria: [ASSET_SPECS[payload.kind].promptRequirement],
+      evidenceIds: [],
+      dependencies: [],
+    };
+    res.json(await generateDeepDraft(request, asset, payload.revisionInstruction, payload.previousDraft));
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : "Drafting failed" });
   }
 });
 
 app.post("/api/render", async (req, res) => {
-  const draft = req.body?.draft as AssetDraft | undefined;
-  const format = asString(req.body?.format, 10) as "md" | "pdf" | "pptx" | "xlsx";
-  if (!draft || !draft.kind || !VALID_KINDS.has(draft.kind)) {
-    return res.status(400).json({ error: "bad draft" });
-  }
-  if (!["md", "pdf", "pptx", "xlsx"].includes(format)) {
-    return res.status(400).json({ error: "bad format" });
-  }
+  const parsed = renderRequestSchema.safeParse(req.body);
+  if (!parsed.success) return invalid(res, parsed.error);
   try {
-    const result = await renderDraft(draft, format);
-    const safeTitle = (draft.title || "asset").replace(/[^a-z0-9\-_ ]/gi, "").trim().slice(0, 60) || "asset";
+    const result = await renderDraft(parsed.data.draft, parsed.data.format);
+    const safeTitle = parsed.data.draft.title.replace(/[^a-z0-9\-_ ]/gi, "").trim().slice(0, 60) || "asset";
     res.setHeader("Content-Type", result.mime);
     res.setHeader("Content-Disposition", `attachment; filename="${safeTitle}.${result.ext}"`);
     res.send(result.bytes);
-  } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : "render failed" });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "Render failed" });
   }
 });
 
-/* ---------- package (zip of every rendered asset) ----------
- * The client sends the package name plus one { draft, format } per asset it
- * kept. Each is rendered to its native format, numbered so the order matches
- * the plan and titles can never collide, and bundled with a short index. */
 app.post("/api/package", async (req, res) => {
-  const packageName = asString(req.body?.packageName, 80).trim();
-  const itemsRaw = Array.isArray(req.body?.items) ? req.body.items : [];
-
-  const items: { draft: AssetDraft; format: RenderFormat }[] = [];
-  for (const it of itemsRaw) {
-    const o = (it ?? {}) as Record<string, unknown>;
-    const draft = o.draft as AssetDraft | undefined;
-    const format = asString(o.format, 10) as RenderFormat;
-    if (!draft || !draft.kind || !VALID_KINDS.has(draft.kind)) continue;
-    if (!["md", "pdf", "pptx", "xlsx"].includes(format)) continue;
-    items.push({ draft, format });
-  }
-
-  if (items.length === 0) {
-    return res.status(400).json({ error: "no assets to package" });
-  }
-
+  const parsed = packageRequestSchema.safeParse(req.body);
+  if (!parsed.success) return invalid(res, parsed.error);
   try {
     const zip = new JSZip();
     const index: string[] = [];
-
-    for (let i = 0; i < items.length; i++) {
-      const { draft, format } = items[i];
-      const result = await renderDraft(draft, format);
-      const safe = (draft.title || "asset")
-        .replace(/[^a-z0-9\-_ ]/gi, "")
-        .trim()
-        .slice(0, 60) || "asset";
-      const num = String(i + 1).padStart(2, "0");
-      const name = `${num} ${safe}.${result.ext}`;
+    for (const [indexNumber, item] of parsed.data.items.entries()) {
+      const result = await renderDraft(item.draft, item.format);
+      const safe = item.draft.title.replace(/[^a-z0-9\-_ ]/gi, "").trim().slice(0, 60) || "asset";
+      const name = `${String(indexNumber + 1).padStart(2, "0")} ${safe}.${result.ext}`;
       zip.file(name, result.bytes);
       index.push(`- ${name}`);
     }
-
-    // a one-file index so the recipient sees what the package contains
-    const pkgName = packageName || "Package";
-    const indexMd = [
-      `# ${pkgName}`,
-      "",
-      `${items.length} asset${items.length === 1 ? "" : "s"} in this package, assembled by WERK.`,
-      "",
-      index.join("\n"),
-      "",
-    ].join("\n");
-    zip.file("00 INDEX.md", indexMd);
-
+    const packageName = parsed.data.packageName;
+    zip.file("00 INDEX.md", `# ${packageName}\n\n${parsed.data.items.length} assets assembled by WERK.\n\n${index.join("\n")}\n`);
     const bytes = await zip.generateAsync({ type: "nodebuffer" });
-    const safePkg = pkgName
-      .replace(/[^a-z0-9\-_ ]/gi, "")
-      .trim()
-      .slice(0, 60) || "package";
+    const safeName = packageName.replace(/[^a-z0-9\-_ ]/gi, "").trim().slice(0, 60) || "package";
     res.setHeader("Content-Type", "application/zip");
-    res.setHeader("Content-Disposition", `attachment; filename="${safePkg}.zip"`);
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}.zip"`);
     res.send(bytes);
-  } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : "package failed" });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "Package failed" });
   }
 });
 
-/* ---------- generate stream (SSE) ----------
- * One POST, one stream: {plan} first, then {draft} per asset, then {done}. */
 app.post("/api/generate", async (req, res) => {
-  const request = asString(req.body?.request, 2000).trim();
-  if (!request) {
-    return res.status(400).json({ error: "request is required" });
-  }
-  if (!hasGroqKey()) {
-    return res.status(503).json({ error: "No Groq key set on the server" });
-  }
+  const parsed = requestPayloadSchema.safeParse(req.body);
+  if (!parsed.success) return invalid(res, parsed.error);
+  if (!hasGroqKey()) return res.status(503).json({ error: "No Groq key set on the server" });
+
+  const payload = parsed.data;
+  const request = payload.request.slice(0, REQUEST_MAX_CHARS);
+  const visibleRequest = stripWorkspaceContextBlock(request);
+  const modelRequest = buildWorkspaceRequest(payload.workspaceContext, request);
+  const jobId = crypto.randomUUID();
+  let sequence = 0;
 
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -452,58 +388,48 @@ app.post("/api/generate", async (req, res) => {
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
 
-  const send = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  const send = (event: Record<string, unknown>) => res.write(`data: ${JSON.stringify({ ...event, jobId, sequence: ++sequence })}\n\n`);
   const fail = (message: string) => {
     send({ type: "error", message });
     res.end();
   };
 
   try {
-    // 1. plan
-    const rawPlan = await groqJson(PLAN_SYSTEM, request, MAX_TOKENS_PLAN);
-    const plan = coercePlan(rawPlan, request);
+    send({ type: "job-started" });
+    const rawPlan = await groqJson(PLAN_SYSTEM, modelRequest, MAX_TOKENS_PLAN);
+    const plan = coercePlan(rawPlan, visibleRequest, payload.workspaceContext);
     send({ type: "plan", plan });
+    plan.assets.forEach((asset) => send({ type: "asset-status", id: asset.id, status: "queued" }));
 
-    if (plan.assets.length === 0) {
-      send({ type: "done" });
-      return res.end();
-    }
-
-    // 2. draft each asset in turn (sequential + paced, kinder to the Groq free
-    //    tier per-minute token limit; the 429 retry in groq.ts backstops)
-    for (let i = 0; i < plan.assets.length; i++) {
-      const asset = plan.assets[i];
-      if (i > 0) await new Promise((r) => setTimeout(r, DRAFT_PACE_MS));
+    for (const [index, asset] of plan.assets.entries()) {
+      if (index > 0) await new Promise((resolve) => setTimeout(resolve, DRAFT_PACE_MS));
       try {
-        const draft = await generateDeepDraft(asset.kind, asset.title, request);
-        send({ type: "draft", id: asset.id, draft });
-      } catch (err) {
-        // one asset failing should not kill the whole package
-        send({
-          type: "draft-error",
-          id: asset.id,
-          message: err instanceof Error ? err.message : "draft failed",
+        send({ type: "asset-status", id: asset.id, status: "drafting" });
+        const draft = await generateDeepDraft(modelRequest, asset, undefined, undefined, (stage) => {
+          send({ type: "asset-status", id: asset.id, status: stage });
         });
+        const warnings = draft.metadata?.quality.filter((issue) => issue.severity === "warning") ?? [];
+        if (warnings.length) send({ type: "quality-warning", id: asset.id, issues: warnings });
+        send({ type: "draft", id: asset.id, draft });
+      } catch (error) {
+        send({ type: "draft-error", id: asset.id, message: error instanceof Error ? error.message : "Drafting failed" });
       }
     }
-
     send({ type: "done" });
     res.end();
-  } catch (err) {
-    fail(err instanceof Error ? err.message : "generate failed");
+  } catch (error) {
+    fail(error instanceof Error ? error.message : "Generation failed");
   }
 });
 
-/* ---------- static (built frontend, if served from here) ---------- */
 const clientDist = path.resolve(__dirname, "../../dist");
 app.use(express.static(clientDist));
 app.get(/^(?!\/api).*/, (_req, res) => {
-  res.sendFile(path.join(clientDist, "index.html"), (err) => {
-    if (err) res.status(204).end();
+  res.sendFile(path.join(clientDist, "index.html"), (error) => {
+    if (error) res.status(204).end();
   });
 });
 
 app.listen(PORT, () => {
-  // eslint-disable-next-line no-console
   console.log(`\n  werk API on http://localhost:${PORT}  (groq: ${hasGroqKey() ? "on" : "off"})\n`);
 });

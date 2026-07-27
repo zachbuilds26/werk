@@ -12,12 +12,29 @@ export interface PlanAsset {
   kind: AssetKind
   title: string
   summary: string
+  purpose: string
+  audience: string
+  decision: string
+  requiredAnalysis: string[]
+  acceptanceCriteria: string[]
+  evidenceIds: string[]
+  dependencies: string[]
+}
+
+export interface PackageBrief {
+  objective: string
+  audience: string
+  decision: string
+  timing: string
+  sharedTerms: string[]
+  consistencyRules: string[]
 }
 
 export interface PackagePlan {
   packageName: string
   packageTitle: string
   reply: string
+  brief: PackageBrief
   assets: PlanAsset[]
 }
 
@@ -33,12 +50,88 @@ export interface ClarifyResult {
   questions: ClarifyQuestion[]
 }
 
+export interface WorkspaceContext {
+  organizationName: string
+  organizationDescription: string
+  workspacePurpose: string
+  defaultAudience?: string
+  toneAndConstraints?: string
+  additionalContext?: string
+}
+
+const WORKSPACE_CONTEXT_LABEL = "Workspace context:"
+
+export function buildWorkspaceContextBlock(workspace: WorkspaceContext): string {
+  const lines = [
+    `Company or team: ${workspace.organizationName.trim()}`,
+    `What they do: ${workspace.organizationDescription.trim()}`,
+    `Workspace purpose: ${workspace.workspacePurpose.trim()}`,
+    workspace.defaultAudience?.trim() ? `Default audience: ${workspace.defaultAudience.trim()}` : "",
+    workspace.toneAndConstraints?.trim() ? `Tone and constraints: ${workspace.toneAndConstraints.trim()}` : "",
+    workspace.additionalContext?.trim() ? `Additional context: ${workspace.additionalContext.trim()}` : "",
+  ].filter(Boolean)
+
+  return [WORKSPACE_CONTEXT_LABEL, ...lines].join("\n")
+}
+
+export function buildWorkspaceRequest(workspace: WorkspaceContext, request: string): string {
+  const current = request.trim()
+  if (!current) return buildWorkspaceContextBlock(workspace)
+  return `${buildWorkspaceContextBlock(workspace)}\n\n${current}`
+}
+
+export interface ConversationContextTurn {
+  request: string
+  reply?: string
+  packageTitle?: string
+  assets?: Pick<PlanAsset, "kind" | "title">[]
+}
+
+/**
+ * Add enough of the active chat to a follow-up request for Werk to resolve
+ * references such as "make the deck shorter", without sending full drafts.
+ */
+export function buildConversationRequest(
+  turns: ConversationContextTurn[],
+  request: string,
+): string {
+  const current = request.trim()
+  if (turns.length === 0) return current
+
+  const history = turns.slice(-6).map((turn, index) => {
+    const assets = turn.assets?.map((asset) => `${asset.kind}: ${asset.title}`).join("; ")
+    return [
+      `Turn ${index + 1} user request: ${turn.request.trim()}`,
+      turn.reply ? `Werk response: ${turn.reply.trim()}` : "",
+      turn.packageTitle ? `Package: ${turn.packageTitle}` : "",
+      assets ? `Assets: ${assets}` : "",
+    ].filter(Boolean).join("\n")
+  }).join("\n\n")
+
+  return `Conversation so far:\n${history}\n\nNew user message: ${current}`
+}
+
 export interface Slide { eyebrow: string; title: string; bullets: string[] }
 export interface DocSection { heading: string; body: string[] }
 export interface TableData { columns: string[]; rows: string[][] }
 export interface AgendaItem { time: string; topic: string; owner: string }
 export interface ActionItem { task: string; owner: string; due: string }
 export interface TimelinePhase { phase: string; window: string; detail: string }
+
+export interface QualityIssue {
+  code: string
+  message: string
+  severity: "error" | "warning"
+  path?: string
+}
+
+export interface DraftMetadata {
+  evidenceIds: string[]
+  assumptions: string[]
+  gaps: string[]
+  quality: QualityIssue[]
+  revision: number
+}
 
 export interface AssetDraft {
   kind: AssetKind
@@ -50,15 +143,20 @@ export interface AssetDraft {
   agenda?: AgendaItem[]
   actions?: ActionItem[]
   timeline?: TimelinePhase[]
+  metadata?: DraftMetadata
 }
 
-// SSE events emitted by POST /api/generate.
+// SSE events emitted by POST /api/generate. Sequence values make it safe for
+// the client to ignore stale stream frames after a new request starts.
 export type GenerateEvent =
-  | { type: "plan"; plan: PackagePlan }
-  | { type: "draft"; id: string; draft: AssetDraft }
-  | { type: "draft-error"; id: string; message: string }
-  | { type: "done" }
-  | { type: "error"; message: string }
+  | { type: "job-started"; jobId: string; sequence: number }
+  | { type: "plan"; jobId: string; sequence: number; plan: PackagePlan }
+  | { type: "asset-status"; jobId: string; sequence: number; id: string; status: "queued" | "drafting" | "verifying" | "revising" }
+  | { type: "quality-warning"; jobId: string; sequence: number; id: string; issues: QualityIssue[] }
+  | { type: "draft"; jobId: string; sequence: number; id: string; draft: AssetDraft }
+  | { type: "draft-error"; jobId: string; sequence: number; id: string; message: string }
+  | { type: "done"; jobId: string; sequence: number }
+  | { type: "error"; jobId: string; sequence: number; message: string }
 
 // Per-kind default download format + a short label for the UI.
 export const KIND_META: Record<AssetKind, { label: string; format: RenderFormat; formatLabel: string }> = {
@@ -75,11 +173,15 @@ export const KIND_META: Record<AssetKind, { label: string; format: RenderFormat;
  * builds. Returns mode "clarify" with up to 4 questions, or "ready" to go
  * straight to generation. Throws on a non-2xx response.
  */
-export async function clarify(request: string, signal?: AbortSignal): Promise<ClarifyResult> {
+export async function clarify(
+  request: string,
+  workspaceContext: WorkspaceContext,
+  signal?: AbortSignal,
+): Promise<ClarifyResult> {
   const res = await fetch("/api/clarify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ request }),
+    body: JSON.stringify({ request, workspaceContext }),
     signal,
   })
   if (!res.ok) {
@@ -117,20 +219,21 @@ export function buildEnrichedRequest(
  */
 export async function streamGenerate(
   request: string,
+  workspaceContext: WorkspaceContext,
   onEvent: (e: GenerateEvent) => void,
   signal?: AbortSignal
 ): Promise<void> {
   const res = await fetch("/api/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ request }),
+    body: JSON.stringify({ request, workspaceContext }),
     signal,
   })
 
   if (!res.ok || !res.body) {
     let message = `Request failed (${res.status})`
     try { message = (await res.json()).error ?? message } catch { /* keep default */ }
-    onEvent({ type: "error", message })
+    onEvent({ type: "error", jobId: "local", sequence: 0, message })
     return
   }
 
@@ -161,15 +264,25 @@ export async function streamGenerate(
  * package without rerunning the whole set. Throws on a non-2xx response.
  */
 export async function regenerateAsset(
-  kind: AssetKind,
-  title: string,
+  asset: PlanAsset,
   request: string,
-  signal?: AbortSignal
+  workspaceContext: WorkspaceContext,
+  previousDraft?: AssetDraft,
+  revisionInstruction?: string,
+  signal?: AbortSignal,
 ): Promise<AssetDraft> {
   const res = await fetch("/api/draft", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ kind, title, request }),
+    body: JSON.stringify({
+      kind: asset.kind,
+      title: asset.title,
+      assetPlan: asset,
+      request,
+      workspaceContext,
+      previousDraft,
+      revisionInstruction,
+    }),
     signal,
   })
   if (!res.ok) {
