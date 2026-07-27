@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: werk
+    plan: free
+    runtime: node
+    buildCommand: npm run build && npm --prefix server ci && npm --prefix server run build
+    startCommand: npm --prefix server start
+    healthCheckPath: /api/health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
