@@ -90,9 +90,10 @@ export function createMarketplaceRouter(
     }
 
     const now = Date.now();
+    for (const [entryKey, entryValue] of rateLimits) {
+      if (entryValue.resetAt <= now) rateLimits.delete(entryKey);
+    }
     const key = callerKey(req);
-    const existing = rateLimits.get(key);
-    if (existing && existing.resetAt <= now) rateLimits.delete(key);
     const entry = rateLimits.get(key);
     if (entry && entry.count >= config.rateLimitMax) {
       res.setHeader("Retry-After", String(Math.ceil((entry.resetAt - now) / 1000)));

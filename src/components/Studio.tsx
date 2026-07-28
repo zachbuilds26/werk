@@ -581,10 +581,20 @@ function FirstUseGuide({ onDismiss }: { onDismiss: () => void }) {
 }
 
 function PackageReview({ plan, onChange, onCreate }: { plan: PackagePlan; onChange: (plan: PackagePlan) => void; onCreate: () => void }) {
+  const [availableAssets] = useState(plan.assets)
+  const selectedIds = new Set(plan.assets.map((asset) => asset.id))
   const updateBrief = (field: "objective" | "audience" | "decision" | "timing", value: string) => onChange({ ...plan, brief: { ...plan.brief, [field]: value } })
   const toggleAsset = (id: string) => {
-    if (plan.assets.length === 1) return
-    onChange({ ...plan, assets: plan.assets.filter((asset) => asset.id !== id) })
+    const asset = availableAssets.find((item) => item.id === id)
+    if (!asset) return
+    const nextIds = new Set(selectedIds)
+    if (nextIds.has(id)) {
+      if (nextIds.size === 1) return
+      nextIds.delete(id)
+    } else {
+      nextIds.add(id)
+    }
+    onChange({ ...plan, assets: availableAssets.filter((item) => nextIds.has(item.id)) })
   }
   return (
     <div className="cx__setup-screen cx__review-screen">
@@ -601,7 +611,7 @@ function PackageReview({ plan, onChange, onCreate }: { plan: PackagePlan; onChan
         {plan.brief.knownDetails.length > 0 && <div className="cx__review-list"><strong>Details supplied</strong>{plan.brief.knownDetails.map((detail) => <span key={detail}>{detail}</span>)}</div>}
         {plan.brief.openInputs.length > 0 && <div className="cx__review-list cx__review-list--open"><strong>Details to confirm</strong>{plan.brief.openInputs.map((detail) => <span key={detail}>{detail}</span>)}</div>}
         <div className="cx__review-assets">
-          {plan.assets.map((asset) => <label className="cx__review-asset" key={asset.id}><input type="checkbox" checked onChange={() => toggleAsset(asset.id)} /><span><b>{KIND_META[asset.kind].label}</b><small>{asset.summary}</small></span></label>)}
+          {availableAssets.map((asset) => <label className="cx__review-asset" key={asset.id}><input type="checkbox" checked={selectedIds.has(asset.id)} disabled={selectedIds.size === 1 && selectedIds.has(asset.id)} onChange={() => toggleAsset(asset.id)} /><span><b>{KIND_META[asset.kind].label}</b><small>{asset.summary}</small></span></label>)}
         </div>
         <div className="cx__setup-actions"><button className="btn btn--primary" onClick={onCreate}>Create {plan.assets.length} draft{plan.assets.length === 1 ? "" : "s"} <Arrow size={15} className="arrow" /></button></div>
       </div>
