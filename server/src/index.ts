@@ -23,7 +23,9 @@ const PORT = Number(process.env.PORT) || 8787;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MAX_TOKENS_CLARIFY = 900;
 const MAX_TOKENS_PLAN = 1600;
-const MAX_TOKENS_DRAFT = 3600;
+// A document needs 5-8 full sections to pass the quality gate; 3600 truncated
+// the model at ~3-4 sections, so the draft was rejected as "use 5 to 8 sections."
+const MAX_TOKENS_DRAFT = 6500;
 const DRAFT_PACE_MS = 18000;
 const VALID_KINDS = new Set<AssetKind>(["deck", "document", "sheet", "agenda", "actions", "timeline"]);
 const OPEN = (detail: string) => `Needs your input: ${detail}`;
