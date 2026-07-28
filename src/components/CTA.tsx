@@ -13,7 +13,7 @@ export default function CTA({ onLaunch }: CTAProps) {
             Start requesting.
           </h2>
           <p className="cta__sub">
-            Make one request and get the whole package back. That is how the best operators work.
+            Make one request, review the suggested work, and create drafts you can actually use.
           </p>
           <button className="btn btn--primary btn--lg cta__btn" onClick={onLaunch}>
             Start a request <Arrow size={17} className="arrow" />

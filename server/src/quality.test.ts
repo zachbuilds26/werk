@@ -3,29 +3,30 @@ import { test } from "node:test";
 import { validateDraftQuality } from "./quality.js";
 import { requestPayloadSchema } from "./schemas.js";
 
-test("rejects skeletal and placeholder action lists", () => {
+test("rejects skeletal action lists and retired illustrative content", () => {
   const issues = validateDraftQuality({
     kind: "actions",
     title: "Launch actions",
-    blurb: "A short list for [Company].",
-    actions: [{ task: "Align team", owner: "", due: "" }],
+    blurb: "Figures are illustrative starting points; replace with your actuals.",
+    actions: [{ task: "Align team [date]", owner: "", due: "" }],
   });
 
   assert.equal(issues.some((issue) => issue.code === "action-count"), true);
-  assert.equal(issues.some((issue) => issue.code === "action-ownership"), true);
-  assert.equal(issues.some((issue) => issue.code === "vague-language"), true);
+  assert.equal(issues.some((issue) => issue.code === "missing-field"), true);
+  assert.equal(issues.some((issue) => issue.code === "invented-content"), true);
+  assert.equal(issues.some((issue) => issue.code === "placeholder"), true);
 });
 
-test("accepts a complete, decision-ready action list", () => {
-  const actions = Array.from({ length: 10 }, (_, index) => ({
-    task: `Publish the approved launch checklist, confirm every dependency, and report readiness for workstream ${index + 1}.`,
-    owner: "Launch Director",
-    due: `Week ${index + 1}`,
+test("accepts visible open inputs instead of invented dates or owners", () => {
+  const actions = Array.from({ length: 6 }, (_, index) => ({
+    task: `Prepare the next agreed deliverable for workstream ${index + 1} and record the outcome for review.`,
+    owner: "Needs your input: responsible person",
+    due: "Needs your input: due date",
   }));
   const issues = validateDraftQuality({
     kind: "actions",
-    title: "Billing launch actions",
-    blurb: "A complete operating checklist assigns owners, delivery dates, dependencies, and review points for the billing launch decision.",
+    title: "Website launch task list",
+    blurb: "A practical draft task list that keeps responsibility and timing visible for confirmation.",
     actions,
   });
 
@@ -34,11 +35,11 @@ test("accepts a complete, decision-ready action list", () => {
 
 test("rejects unrecognised fields at the API boundary", () => {
   const payload = requestPayloadSchema.safeParse({
-    request: "Prepare the Q2 board pack",
+    request: "Prepare a proposal for a new client",
     workspaceContext: {
-      organizationName: "Acme Finance",
-      organizationDescription: "Expense software for finance teams",
-      workspacePurpose: "Board packs and operating reviews",
+      organizationName: "Maya Studio",
+      organizationDescription: "Independent web designer",
+      workspacePurpose: "Client proposals and project handovers",
     },
     unexpected: "must not pass",
   });

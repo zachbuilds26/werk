@@ -2,20 +2,20 @@ const steps = [
   {
     num: "01",
     title: "Describe",
-    body: "Say what you need, as you would to a sharp colleague. WERK reads the intent, the scope, and the deliverables.",
+    body: "Say what you need in your own words. WERK asks only for the details that change the result.",
     chip: "Plain language",
   },
   {
     num: "02",
-    title: "Coordinate",
-    body: "WERK splits the request into the assets the job takes, then makes each one to a professional standard.",
-    chip: "Auto-orchestrated",
+    title: "Review",
+    body: "WERK suggests a small set of useful outputs. You choose what to create and keep missing details visible.",
+    chip: "You stay in control",
   },
   {
     num: "03",
     title: "Deliver",
-    body: "Review the full package in your workspace. Export, share, or iterate. Everything stays in sync.",
-    chip: "Ready to ship",
+    body: "Review each draft, request changes, and download the finished files. Your work stays on this browser.",
+    chip: "Clear drafts",
   },
 ]
 

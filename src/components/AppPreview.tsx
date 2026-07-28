@@ -18,18 +18,18 @@ import {
  */
 
 const ASSETS = [
-  { Icon: Presentation, name: "Board presentation" },
-  { Icon: Document, name: "Executive summary" },
-  { Icon: Sheet, name: "Financial model" },
-  { Icon: Calendar, name: "Meeting agenda" },
-  { Icon: List, name: "Action items" },
-  { Icon: Timeline, name: "Project timeline" },
+  { Icon: Presentation, name: "Client presentation" },
+  { Icon: Document, name: "Project proposal" },
+  { Icon: Sheet, name: "Scope tracker" },
+  { Icon: Calendar, name: "Meeting plan" },
+  { Icon: List, name: "Task list" },
+  { Icon: Timeline, name: "Project schedule" },
 ]
 
 const ACTIONS = [
-  { Icon: Brief, label: "Brief" },
-  { Icon: Presentation, label: "Deck" },
-  { Icon: Sheet, label: "Model" },
+  { Icon: Brief, label: "Plan" },
+  { Icon: Presentation, label: "Slides" },
+  { Icon: Sheet, label: "Tracker" },
 ]
 
 /** Classic macOS pointing hand — flies in from the lower-right of its target,
@@ -89,8 +89,8 @@ export default function AppPreview() {
       {/* window chrome */}
       <div className="apv__bar">
         <i /><i /><i />
-        <span className="apv__title">werk — Board pack</span>
-        <span className="apv__pill">6 assets</span>
+        <span className="apv__title">werk — Client proposal</span>
+        <span className="apv__pill">4 outputs</span>
       </div>
 
       <div className="apv__body">
@@ -126,20 +126,20 @@ export default function AppPreview() {
             {/* scene 1 — the request, the reply, the chip the cursor clicks */}
             <div className="apv__scene apv__scene-chat">
               <div className="apv__msg apv__msg-user">
-                I need a board presentation for next Friday.
+                I need a proposal for a new website client.
               </div>
 
               <div className="apv__typing"><i /><i /><i /></div>
 
               <div className="apv__msg apv__msg-ai">
-                On it — I&apos;ve drafted your <em>board pack</em>. Six assets, ready to review.
+                I&apos;ve suggested your <em>client proposal</em>. Review the outputs before I draft them.
               </div>
 
               <div className="apv__chip-wrap">
                 <span className="apv__chip">
                   <span className="apv__chip-fill" />
                   <Presentation size={13} />
-                  <span className="apv__chip-text">Open the board pack</span>
+                  <span className="apv__chip-text">Review the suggestion</span>
                 </span>
                 <Cursor />
               </div>
@@ -149,10 +149,10 @@ export default function AppPreview() {
                 scene 1 once the cursor has "clicked" the chip */}
             <div className="apv__scene apv__scene-pack">
               <div className="apv__pack">
-                <p className="apv__pack-head"><Presentation size={12} /> Board presentation · 14 slides</p>
+                <p className="apv__pack-head"><Presentation size={12} /> Client presentation · 8 slides</p>
                 <div className="apv__slide">
-                  <span className="apv__slide-eyebrow">Q3 review</span>
-                  <span className="apv__slide-title">The whole package,<br />one meeting.</span>
+                  <span className="apv__slide-eyebrow">Website redesign</span>
+                  <span className="apv__slide-title">A clear proposal,<br />ready to review.</span>
                 </div>
                 <div className="apv__thumbs">
                   <div className="apv__thumb" />
@@ -162,7 +162,7 @@ export default function AppPreview() {
                   </div>
                   <div className="apv__thumb" />
                 </div>
-                <p className="apv__pack-result"><Check size={12} /> Delivered — board pack ready to share.</p>
+                <p className="apv__pack-result"><Check size={12} /> Draft ready — details stay visible to confirm.</p>
               </div>
             </div>
           </div>

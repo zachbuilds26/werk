@@ -41,8 +41,15 @@ const HEX = {
  * Shared markdown (every kind) — also the cheapest, always-available
  * representation.
  * ------------------------------------------------------------------ */
+function openInputNote(d: AssetDraft): string[] {
+  const gaps = d.metadata?.gaps ?? [];
+  return gaps.length
+    ? ["## Details to confirm", "", ...gaps.map((gap) => `- ${gap}`), "", "This is a draft until these details are confirmed.", ""]
+    : [];
+}
+
 function toMarkdown(d: AssetDraft): string {
-  const out: string[] = [`# ${d.title}`, "", d.blurb, ""];
+  const out: string[] = [`# ${d.title}`, "", d.blurb, "", ...openInputNote(d)];
   switch (d.kind) {
     case "deck":
       for (const s of d.slides ?? []) {
@@ -207,7 +214,17 @@ function toPdf(d: AssetDraft): Promise<Buffer> {
     .fontSize(10.5)
     .fillColor(HEX.ink2)
     .text(d.blurb, margin, y, { width: contentW });
-  y = doc.y + 14;
+  y = doc.y + 8;
+
+  const gaps = d.metadata?.gaps ?? [];
+  if (gaps.length) {
+    doc.font("Helvetica-Bold").fontSize(9).fillColor(HEX.ink).text("DETAILS TO CONFIRM", margin, y, { width: contentW });
+    y = doc.y + 3;
+    doc.font("Helvetica").fontSize(9).fillColor(HEX.ink2).text(gaps.map((gap) => `• ${gap}`).join("\n"), margin, y, { width: contentW });
+    y = doc.y + 10;
+  } else {
+    y += 6;
+  }
 
   // hairline under the header block
   doc.moveTo(margin, y).lineTo(margin + contentW, y).strokeColor(HEX.line).lineWidth(1).stroke();
@@ -349,8 +366,9 @@ async function toPptx(d: AssetDraft): Promise<Buffer> {
       x: 0.7, y: 1.95, w: 11.5, h: 1.6, fontSize: 40, color: INK,
       fontFace: "Arial", bold: true, align: "left", valign: "top",
     });
-    s.addText(sub, {
-      x: 0.7, y: 3.7, w: 10.5, h: 0.8, fontSize: 16, color: INK2,
+    const confirmationNote = (d.metadata?.gaps?.length ?? 0) ? `\nDetails to confirm: ${d.metadata!.gaps.join(" · ")}` : "";
+    s.addText(`${sub}${confirmationNote}`, {
+      x: 0.7, y: 3.7, w: 10.5, h: 1.25, fontSize: 16, color: INK2,
       fontFace: "Arial", align: "left", valign: "top",
     });
     return s;
@@ -491,6 +509,10 @@ async function toXlsx(d: AssetDraft): Promise<Buffer> {
   ws.getCell("A1").font = { bold: true, color: { argb: "FF15395C" }, size: 16, name: "Arial" };
   ws.getCell("A2").value = d.blurb;
   ws.getCell("A2").font = { color: { argb: "FF6F8093" }, size: 10, name: "Arial" };
+  if (d.metadata?.gaps.length) {
+    ws.getCell("A3").value = `Details to confirm: ${d.metadata.gaps.join(" | ")}`;
+    ws.getCell("A3").font = { color: { argb: "FF15395C" }, size: 10, bold: true, name: "Arial" };
+  }
 
   const writeTable = (columns: string[], rows: string[][], startRow: number) => {
     const headerRow = ws.getRow(startRow);
@@ -538,7 +560,7 @@ async function toXlsx(d: AssetDraft): Promise<Buffer> {
     return startRow + 1 + rows.length;
   };
 
-  let row = 4;
+  let row = d.metadata?.gaps.length ? 5 : 4;
   switch (d.kind) {
     case "sheet": {
       const t = d.table;

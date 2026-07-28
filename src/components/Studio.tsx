@@ -2,15 +2,15 @@ import { useEffect, useRef, useState } from "react"
 import { Arrow, Check, Download, Layers, Redo } from "./icons"
 import Logo from "./Logo"
 import {
-  streamGenerate, clarify as clarifyRequest, buildEnrichedRequest, buildConversationRequest,
-  buildWorkspaceRequest, downloadAsset, downloadPackage, regenerateAsset, KIND_META,
+  streamGenerate, clarify as clarifyRequest, planPackage, buildEnrichedRequest, buildOpenInputs, buildConversationRequest,
+  downloadAsset, downloadPackage, regenerateAsset, KIND_META,
   type PackagePlan, type PlanAsset, type AssetDraft,
   type GenerateEvent, type RenderFormat,
   type ClarifyQuestion, type ClarifyResult,
   type WorkspaceContext,
 } from "../lib/api"
 
-type Phase = "empty" | "streaming" | "clarifying" | "ready" | "error"
+type Phase = "empty" | "streaming" | "clarifying" | "planning" | "ready" | "error"
 
 type WorkspaceMode = "setup" | "edit" | null
 
@@ -29,6 +29,8 @@ interface ChatTurn {
   drafts: Record<string, DraftState>
   clarify: ClarifyResult | null
   clarifyAnswers: Record<string, string>
+  openInputs?: string[]
+  workspaceSnapshot?: WorkspaceContext
   errorMsg: string
 }
 
@@ -57,10 +59,10 @@ const EMPTY_WORKSPACE_DRAFT: WorkspaceDraft = {
 }
 
 const EXAMPLES = [
-  "Prep the Q4 board pack for Friday.",
-  "Launch the new billing feature next week.",
-  "Run the partnership kickoff meeting.",
-  "Report on last quarter's growth experiments.",
+  "Create a client proposal for my website design service.",
+  "Plan the launch of my handmade skincare brand.",
+  "Prepare a project kickoff for a new client.",
+  "Make a job-search plan for a product manager role.",
 ]
 
 function readWorkspaceContext(): WorkspaceContext | null {
@@ -148,6 +150,8 @@ export default function Studio({ onBack }: StudioProps) {
   const [errorMsg, setErrorMsg] = useState("")
   const [clarify, setClarify] = useState<ClarifyResult | null>(null)
   const [clarifyAnswers, setClarifyAnswers] = useState<Record<string, string>>({})
+  const [openInputs, setOpenInputs] = useState<string[]>([])
+  const [clarifyError, setClarifyError] = useState("")
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null)
   const [downloadingPkg, setDownloadingPkg] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
@@ -167,7 +171,7 @@ export default function Studio({ onBack }: StudioProps) {
       const s = JSON.parse(raw) as {
         history?: ChatTurn[]; request?: string; plan?: PackagePlan | null;
         drafts?: Record<string, DraftState>; clarify?: ClarifyResult | null;
-        clarifyAnswers?: Record<string, string>; genRequest?: string;
+        clarifyAnswers?: Record<string, string>; openInputs?: string[]; genRequest?: string;
       }
       if (!s.request && !s.plan && !s.history?.length) return
       const active = restoreTurn({
@@ -176,6 +180,7 @@ export default function Studio({ onBack }: StudioProps) {
         drafts: s.drafts ?? {},
         clarify: s.clarify ?? null,
         clarifyAnswers: s.clarifyAnswers ?? {},
+        openInputs: s.openInputs ?? [],
         errorMsg: "",
       })
       genRequestRef.current = s.genRequest || active.request
@@ -185,6 +190,7 @@ export default function Studio({ onBack }: StudioProps) {
       setDrafts(active.drafts)
       setClarify(active.clarify)
       setClarifyAnswers(active.clarifyAnswers)
+      setOpenInputs(active.openInputs ?? [])
       setPhase(active.plan ? "ready" : "empty")
     } catch { /* ignore corrupt storage */ }
   }, [])
@@ -204,11 +210,11 @@ export default function Studio({ onBack }: StudioProps) {
   useEffect(() => {
     if (phase === "streaming") return
     const snap = {
-      history, request, plan, drafts, clarify, clarifyAnswers,
+      history, request, plan, drafts, clarify, clarifyAnswers, openInputs,
       genRequest: genRequestRef.current,
     }
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(snap)) } catch { /* ignore quota */ }
-  }, [history, request, plan, drafts, clarify, clarifyAnswers, phase])
+  }, [history, request, plan, drafts, clarify, clarifyAnswers, openInputs, phase])
 
   // keep the thread pinned to the latest content as drafts stream in
   useEffect(() => {
@@ -236,110 +242,56 @@ export default function Studio({ onBack }: StudioProps) {
 
   const start = (text: string) => {
     const value = text.trim()
-    if (!value) return
-    if (!workspace) {
-      openWorkspaceEditor("setup")
-      return
-    }
-
+    if (!value || !workspace) { if (!workspace) openWorkspaceEditor("setup"); return }
     const currentTurn: ChatTurn | null = request
-      ? { request, plan, drafts, clarify, clarifyAnswers, errorMsg }
+      ? { request, plan, drafts, clarify, clarifyAnswers, openInputs, workspaceSnapshot: workspace, errorMsg }
       : null
-    const contextTurns = [
-      ...history,
-      ...(currentTurn ? [currentTurn] : []),
-    ].map((turn) => ({
-      request: turn.request,
-      reply: turn.plan?.reply,
-      packageTitle: turn.plan?.packageTitle,
-      assets: turn.plan?.assets,
+    const contextTurns = [...history, ...(currentTurn ? [currentTurn] : [])].map((turn) => ({
+      request: turn.request, reply: turn.plan?.reply, packageTitle: turn.plan?.packageTitle, assets: turn.plan?.assets,
+      knownDetails: turn.plan?.brief.knownDetails, openInputs: turn.openInputs,
     }))
-    const conversationRequest = buildConversationRequest(contextTurns, value)
-    const contextualRequest = buildWorkspaceRequest(workspace, conversationRequest)
-
-    abortRef.current?.abort()
-    const ctrl = new AbortController()
-    abortRef.current = ctrl
+    const contextualRequest = buildConversationRequest(contextTurns, value)
+    abortRef.current?.abort(); const ctrl = new AbortController(); abortRef.current = ctrl
     genRequestRef.current = contextualRequest
     if (currentTurn) setHistory((turns) => [...turns, currentTurn])
-
-    // A send appends a new turn. Only the explicit New chat action clears the
-    // conversation and its saved state.
-    setRequest(value)
-    setPlan(null)
-    setDrafts({})
-    setOpenId(null)
-    setErrorMsg("")
-    setClarify(null)
-    setClarifyAnswers({})
-    setPhase("streaming")
-
-    // Decide first whether we have enough context to build well. If not, ask
-    // a few targeted questions inline; otherwise go straight to generation.
-    clarifyRequest(contextualRequest, workspace, ctrl.signal)
-      .then((res) => {
-        if (res.mode === "clarify" && res.questions.length > 0) {
-          setClarify(res)
-          setClarifyAnswers({})
-          setPhase("clarifying")
-        } else {
-          runGenerate(contextualRequest, workspace)
-        }
-      })
-      .catch((err) => {
-        if (err?.name !== "AbortError") {
-          setErrorMsg(err?.message ?? "Request failed")
-          setPhase("error")
-        }
-      })
+    setRequest(value); setPlan(null); setDrafts({}); setOpenId(null); setErrorMsg(""); setClarify(null); setClarifyAnswers({}); setOpenInputs([]); setClarifyError(""); setPhase("streaming")
+    clarifyRequest(contextualRequest, workspace, [], ctrl.signal).then((res) => {
+      if (res.mode === "clarify" && res.questions.length) { setClarify(res); setPhase("clarifying") }
+      else runPlan(contextualRequest, workspace, [])
+    }).catch((err) => { if (err?.name !== "AbortError") { setErrorMsg(err?.message ?? "Request failed"); setPhase("error") } })
   }
 
-  const runGenerate = (req: string, workspaceContext: WorkspaceContext) => {
-    abortRef.current?.abort()
-    const ctrl = new AbortController()
-    abortRef.current = ctrl
-    genRequestRef.current = req
-    setPhase("streaming")
-
-    streamGenerate(req, workspaceContext, (e: GenerateEvent) => {
-      if (e.type === "plan") {
-        setPlan(e.plan)
-        setDrafts(Object.fromEntries(e.plan.assets.map((a) => [a.id, { done: false, status: "queued" }])))
-      } else if (e.type === "asset-status") {
-        setDrafts((d) => ({ ...d, [e.id]: { ...d[e.id], status: e.status, done: false } }))
-      } else if (e.type === "quality-warning") {
-        setDrafts((d) => ({
-          ...d,
-          [e.id]: { ...d[e.id], warning: e.issues.map((issue) => issue.message).join(" ") },
-        }))
-      } else if (e.type === "draft") {
-        setDrafts((d) => {
-          const previous = d[e.id]
-          const versions = [...(previous?.versions ?? (previous?.draft ? [previous.draft] : [])), e.draft]
-          return { ...d, [e.id]: { draft: e.draft, versions, done: true } }
-        })
-      } else if (e.type === "draft-error") {
-        setDrafts((d) => ({ ...d, [e.id]: { ...d[e.id], error: e.message, done: true } }))
-      } else if (e.type === "done") {
-        setPhase("ready")
-      } else if (e.type === "error") {
-        setErrorMsg(e.message)
-        setPhase("error")
-      }
-    }, ctrl.signal).catch((err) => {
-      if (err?.name !== "AbortError") {
-        setErrorMsg(err?.message ?? "Request failed")
-        setPhase("error")
-      }
-    })
+  const runPlan = (req: string, workspaceContext: WorkspaceContext, inputs: string[]) => {
+    abortRef.current?.abort(); const ctrl = new AbortController(); abortRef.current = ctrl
+    genRequestRef.current = req; setPhase("streaming")
+    planPackage(req, workspaceContext, inputs, ctrl.signal).then((nextPlan) => {
+      const combinedInputs = [...new Set([...inputs, ...nextPlan.brief.openInputs])]
+      setOpenInputs(combinedInputs); setPlan({ ...nextPlan, brief: { ...nextPlan.brief, openInputs: combinedInputs } }); setPhase("planning")
+    }).catch((err) => { if (err?.name !== "AbortError") { setErrorMsg(err?.message ?? "Planning failed"); setPhase("error") } })
   }
 
-  const submitClarify = () => {
+  const approvePlan = () => {
+    if (!plan || !workspace) return
+    abortRef.current?.abort(); const ctrl = new AbortController(); abortRef.current = ctrl
+    setPhase("streaming")
+    streamGenerate(genRequestRef.current, workspace, plan, openInputs, (e: GenerateEvent) => {
+      if (e.type === "plan") { setPlan(e.plan); setDrafts(Object.fromEntries(e.plan.assets.map((a) => [a.id, { done: false, status: "queued" }]))) }
+      else if (e.type === "asset-status") setDrafts((d) => ({ ...d, [e.id]: { ...d[e.id], status: e.status, done: false } }))
+      else if (e.type === "quality-warning") setDrafts((d) => ({ ...d, [e.id]: { ...d[e.id], warning: e.issues.map((issue) => issue.message).join(" ") } }))
+      else if (e.type === "draft") setDrafts((d) => { const previous = d[e.id]; const versions = [...(previous?.versions ?? (previous?.draft ? [previous.draft] : [])), e.draft]; return { ...d, [e.id]: { draft: e.draft, versions, done: true } } })
+      else if (e.type === "draft-error") setDrafts((d) => ({ ...d, [e.id]: { ...d[e.id], error: e.message, done: true } }))
+      else if (e.type === "done") setPhase("ready")
+      else if (e.type === "error") { setErrorMsg(e.message); setPhase("error") }
+    }, ctrl.signal).catch((err) => { if (err?.name !== "AbortError") { setErrorMsg(err?.message ?? "Request failed"); setPhase("error") } })
+  }
+
+  const submitClarify = (allowOpenInputs = false) => {
     if (!clarify || !workspace) return
-    // Keep the card visible (read-only) so the thread records what was given,
-    // then fold the answers into a "Context:" block and build the package.
+    const missingRequired = clarify.questions.filter((q) => q.required && !(clarifyAnswers[q.key] ?? "").trim())
+    if (missingRequired.length && !allowOpenInputs) { setClarifyError("Answer the required question or choose to keep it visible as an open input."); return }
     const enriched = buildEnrichedRequest(genRequestRef.current, clarify.questions, clarifyAnswers)
-    runGenerate(enriched, workspace)
+    const inputs = buildOpenInputs(clarify.questions, clarifyAnswers)
+    setClarifyError(""); runPlan(enriched, workspace, inputs)
   }
 
   const onAnswerChange = (key: string, val: string) => {
@@ -357,21 +309,23 @@ export default function Studio({ onBack }: StudioProps) {
     setErrorMsg("")
     setClarify(null)
     setClarifyAnswers({})
+    setOpenInputs([])
+    setClarifyError("")
     setRegeneratingId(null)
     genRequestRef.current = ""
   }
 
   // regenerate a single asset in place, reusing the same request context the
   // package was built from (so the new draft still tracks the original ask).
-  const regenerate = (id: string) => {
+  const regenerate = (id: string, instruction?: string) => {
     const asset = plan?.assets.find((a) => a.id === id)
-    if (!asset || regeneratingId || !workspace) return
+    if (!asset || !plan || regeneratingId || !workspace) return
     abortRef.current?.abort()
     const ctrl = new AbortController()
     abortRef.current = ctrl
     setRegeneratingId(id)
     setDrafts((d) => ({ ...d, [id]: { ...d[id], status: "revising", done: false, error: undefined } }))
-    regenerateAsset(asset, genRequestRef.current, workspace, drafts[id]?.draft, undefined, ctrl.signal)
+    regenerateAsset(asset, genRequestRef.current, workspace, plan.brief, openInputs, drafts[id]?.draft, instruction, ctrl.signal)
       .then((draft) => {
         setDrafts((d) => {
           const previous = d[id]
@@ -395,7 +349,7 @@ export default function Studio({ onBack }: StudioProps) {
   const doneItems = plan?.assets
     .filter((a) => drafts[a.id]?.draft)
     .map((a) => ({ draft: drafts[a.id]!.draft!, format: KIND_META[a.kind].format })) ?? []
-  const canDownloadPkg = doneItems.length > 0
+  const canDownloadPkg = !!plan && phase === "ready" && doneItems.length === plan.assets.length
 
   const downloadPkg = async () => {
     if (!plan || doneItems.length === 0 || downloadingPkg) return
@@ -420,14 +374,14 @@ export default function Studio({ onBack }: StudioProps) {
             <span className="cx__bar-name">{pkgTitle}</span>
           </span>
           {assetCount > 0 && (
-            <span className="cx__pill"><span className="cx__pill-dot" /> {assetCount} assets</span>
+            <span className="cx__pill"><span className="cx__pill-dot" /> {assetCount} outputs</span>
           )}
         </div>
 
         <div className="cx__body">
           {/* sidebar — the package WERK assembled (hidden on narrow viewports) */}
           <aside className="cx__side">
-            <p className="cx__side-label"><Layers size={12} /> Assets</p>
+            <p className="cx__side-label"><Layers size={12} /> Outputs</p>
             <div className="cx__side-list">
               {plan && plan.assets.length > 0 ? (
                 plan.assets.map((a) => (
@@ -455,7 +409,7 @@ export default function Studio({ onBack }: StudioProps) {
                   <p className="cx__workspace-copy">Set the workspace context to unlock the chat.</p>
                 )}
                 <button className="cx__side-act cx__side-act--full" onClick={() => openWorkspaceEditor(workspace ? "edit" : "setup")}>
-                  {workspace ? "Edit workspace context" : "Set workspace context"}
+                  {workspace ? "Edit saved details" : "Add saved details"}
                 </button>
               </div>
               {canDownloadPkg && (
@@ -487,6 +441,8 @@ export default function Studio({ onBack }: StudioProps) {
               />
             ) : phase === "empty" ? (
               <Empty onStart={start} />
+            ) : phase === "planning" && plan ? (
+              <PackageReview plan={plan} onChange={setPlan} onCreate={approvePlan} />
             ) : (
               <Thread
                 threadRef={threadRef}
@@ -499,6 +455,7 @@ export default function Studio({ onBack }: StudioProps) {
                 errorMsg={errorMsg}
                 clarify={clarify}
                 clarifyAnswers={clarifyAnswers}
+                clarifyError={clarifyError}
                 onAnswerChange={onAnswerChange}
                 onSubmitClarify={submitClarify}
                 onOpen={setOpenId}
@@ -555,7 +512,7 @@ function Empty({ onStart }: { onStart: (text: string) => void }) {
       <div className="cx__empty-inner">
         <h1 className="cx__greeting">What do you need?</h1>
         <p className="cx__greeting-sub">
-          Describe the outcome in plain language. WERK uses the saved workspace context and plans the package from there.
+          Describe the outcome in plain language. WERK suggests the useful documents and plans, then lets you review them before it writes.
         </p>
         <Composer onSend={onStart} large autoFocus />
         <div className="cx__examples">
@@ -568,10 +525,39 @@ function Empty({ onStart }: { onStart: (text: string) => void }) {
   )
 }
 
+function PackageReview({ plan, onChange, onCreate }: { plan: PackagePlan; onChange: (plan: PackagePlan) => void; onCreate: () => void }) {
+  const updateBrief = (field: "objective" | "audience" | "decision" | "timing", value: string) => onChange({ ...plan, brief: { ...plan.brief, [field]: value } })
+  const toggleAsset = (id: string) => {
+    if (plan.assets.length === 1) return
+    onChange({ ...plan, assets: plan.assets.filter((asset) => asset.id !== id) })
+  }
+  return (
+    <div className="cx__setup-screen cx__review-screen">
+      <div className="cx__setup-card cx__review-card">
+        <p className="cx__setup-kicker">Suggested outputs</p>
+        <h1 className="cx__setup-title">Review before WERK writes</h1>
+        <p className="cx__setup-copy">WERK will use only the details shown below. Anything else stays marked as needing your input.</p>
+        <div className="cx__setup-grid">
+          <WorkspaceField label="What you need to achieve" value={plan.brief.objective} onChange={(value) => updateBrief("objective", value)} placeholder="The outcome you need" required wide />
+          <WorkspaceField label="Who this is for" value={plan.brief.audience} onChange={(value) => updateBrief("audience", value)} placeholder="Needs your input: audience" wide />
+          <WorkspaceField label="Desired next step" value={plan.brief.decision} onChange={(value) => updateBrief("decision", value)} placeholder="Needs your input: desired next step" wide />
+          <WorkspaceField label="Timing" value={plan.brief.timing} onChange={(value) => updateBrief("timing", value)} placeholder="Needs your input: timing" wide />
+        </div>
+        {plan.brief.knownDetails.length > 0 && <div className="cx__review-list"><strong>Details supplied</strong>{plan.brief.knownDetails.map((detail) => <span key={detail}>{detail}</span>)}</div>}
+        {plan.brief.openInputs.length > 0 && <div className="cx__review-list cx__review-list--open"><strong>Details to confirm</strong>{plan.brief.openInputs.map((detail) => <span key={detail}>{detail}</span>)}</div>}
+        <div className="cx__review-assets">
+          {plan.assets.map((asset) => <label className="cx__review-asset" key={asset.id}><input type="checkbox" checked onChange={() => toggleAsset(asset.id)} /><span><b>{KIND_META[asset.kind].label}</b><small>{asset.summary}</small></span></label>)}
+        </div>
+        <div className="cx__setup-actions"><button className="btn btn--primary" onClick={onCreate}>Create {plan.assets.length} draft{plan.assets.length === 1 ? "" : "s"} <Arrow size={15} className="arrow" /></button></div>
+      </div>
+    </div>
+  )
+}
+
 /* ---- the conversation thread (chat pane) ---- */
 function Thread({
   threadRef, workspace, history, request, plan, drafts, phase, errorMsg,
-  clarify, clarifyAnswers, onAnswerChange, onSubmitClarify, onOpen, onSend,
+  clarify, clarifyAnswers, clarifyError, onAnswerChange, onSubmitClarify, onOpen, onSend,
   onDownloadPkg, downloadingPkg, canDownloadPkg, onEditWorkspace,
 }: {
   threadRef: React.RefObject<HTMLDivElement>
@@ -584,8 +570,9 @@ function Thread({
   errorMsg: string
   clarify: ClarifyResult | null
   clarifyAnswers: Record<string, string>
+  clarifyError: string
   onAnswerChange: (key: string, val: string) => void
-  onSubmitClarify: () => void
+  onSubmitClarify: (allowOpenInputs?: boolean) => void
   onOpen: (id: string) => void
   onSend: (text: string) => void
   onDownloadPkg: () => void
@@ -671,7 +658,7 @@ function Thread({
             <div className="cx__clarify">
               {clarify.questions.map((q, i) => (
                 <label key={q.key} className="cx__clarify-field">
-                  <span className="cx__clarify-q">{q.question}</span>
+                  <span className="cx__clarify-q">{q.question}{q.required ? " *" : ""}</span>
                   <input
                     className="cx__clarify-input"
                     type="text"
@@ -683,9 +670,13 @@ function Thread({
                   />
                 </label>
               ))}
+              {clarifyError && <p className="cx__quality-note">{clarifyError}</p>}
               <div className="cx__clarify-foot">
-                <button className="btn btn--primary" onClick={onSubmitClarify}>
-                  Build the package <Arrow size={15} className="arrow" />
+                <button className="btn btn--primary" onClick={() => onSubmitClarify()}>
+                  Review suggestions <Arrow size={15} className="arrow" />
+                </button>
+                <button className="btn btn--ghost" onClick={() => onSubmitClarify(true)}>
+                  Keep unanswered items visible
                 </button>
               </div>
             </div>
@@ -727,21 +718,21 @@ function WorkspaceSetup({
           {mode === "setup" ? "Set the workspace context" : "Edit the workspace context"}
         </h1>
         <p className="cx__setup-copy">
-          WERK uses this once per workspace so it does not guess your company on the first request.
+          This gives WERK helpful background for repeat requests. Use your name, team, business, client, or project.
         </p>
         {workspaceName && mode === "edit" && (
           <p className="cx__setup-note">Editing {workspaceName}.</p>
         )}
         <p className="cx__setup-example">
-          Example: Acme Finance / internal finance team / board packs, budgets, and launch docs.
+          Example: Maya Studio / independent web designer / client proposals, launch plans, and project handovers.
         </p>
 
         <div className="cx__setup-grid">
           <WorkspaceField
-            label="Company or team name"
+            label="Your name, team, business, or client"
             value={draft.organizationName}
             onChange={(value) => update("organizationName", value)}
-            placeholder="Acme Finance"
+            placeholder="Maya Studio"
             required
             wide
           />
@@ -749,7 +740,7 @@ function WorkspaceSetup({
             label="What they do"
             value={draft.organizationDescription}
             onChange={(value) => update("organizationDescription", value)}
-            placeholder="B2B expense software for finance teams"
+            placeholder="Independent web designer for small businesses"
             multiline
             rows={3}
             required
@@ -759,7 +750,7 @@ function WorkspaceSetup({
             label="What this workspace is for"
             value={draft.workspacePurpose}
             onChange={(value) => update("workspacePurpose", value)}
-            placeholder="Board packs, Q1 budgets, launch docs, and leadership updates"
+            placeholder="Client proposals, launch plans, and project handovers"
             multiline
             rows={3}
             required
@@ -966,12 +957,13 @@ function Drawer({
   asset: PlanAsset | null
   state?: DraftState
   regenerating: boolean
-  onRegenerate: (id: string) => void
+  onRegenerate: (id: string, instruction?: string) => void
   onClose: () => void
 }) {
   const [downloading, setDownloading] = useState(false)
   const versions = state?.versions ?? (state?.draft ? [state.draft] : [])
   const [selectedVersion, setSelectedVersion] = useState(0)
+  const [revisionInstruction, setRevisionInstruction] = useState("")
 
   useEffect(() => {
     setSelectedVersion(Math.max(0, versions.length - 1))
@@ -1026,6 +1018,7 @@ function Drawer({
               {draft ? (
                 <>
                   {state?.warning && <p className="cx__quality-note">Quality note: {state.warning}</p>}
+                  {(draft.metadata?.gaps.length ?? 0) > 0 && <div className="cx__review-list cx__review-list--open"><strong>Details to confirm</strong>{draft.metadata!.gaps.map((gap) => <span key={gap}>{gap}</span>)}</div>}
                   <DraftBody draft={draft} />
                 </>
               ) : errored ? (
@@ -1039,14 +1032,17 @@ function Drawer({
               )}
             </div>
             <footer className="cx__drawer-foot">
-              <button
-                className="btn btn--ghost cx__drawer-regen"
-                disabled={regenerating}
-                onClick={() => onRegenerate(asset.id)}
-                title="Generate a fresh version of this asset"
-              >
-                <Redo size={15} /> {regenerating ? "Regenerating…" : "Regenerate"}
-              </button>
+              <div className="cx__drawer-revise">
+                <input value={revisionInstruction} onChange={(e) => setRevisionInstruction(e.target.value)} placeholder="What should change?" />
+                <button
+                  className="btn btn--ghost cx__drawer-regen"
+                  disabled={regenerating}
+                  onClick={() => onRegenerate(asset.id, revisionInstruction || undefined)}
+                  title="Create a revised version using this instruction"
+                >
+                  <Redo size={15} /> {regenerating ? "Revising…" : "Revise"}
+                </button>
+              </div>
               <div className="cx__drawer-foot-right">
                 <button className="btn btn--ghost" disabled={!draft} onClick={() => download("md")}>Markdown</button>
                 <button className="btn btn--primary" disabled={!draft || downloading} onClick={() => download(meta.format)}>

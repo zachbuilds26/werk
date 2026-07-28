@@ -1,26 +1,14 @@
-// Shared domain shapes for the WERK API. Model output is converted to these
-// structures before it reaches the UI or an export renderer.
+// Shared domain shapes for the WERK API. The model may propose a package, but
+// user-provided context and open inputs remain visible through every draft.
 
-export type AssetKind =
-  | "deck"
-  | "document"
-  | "sheet"
-  | "agenda"
-  | "actions"
-  | "timeline";
+export type AssetKind = "deck" | "document" | "sheet" | "agenda" | "actions" | "timeline";
 
 export const ASSET_KINDS: readonly AssetKind[] = [
-  "deck",
-  "document",
-  "sheet",
-  "agenda",
-  "actions",
-  "timeline",
+  "deck", "document", "sheet", "agenda", "actions", "timeline",
 ];
 
 export type RenderFormat = "md" | "pdf" | "pptx" | "xlsx";
-
-export type EvidenceSource = "user" | "workspace" | "clarification" | "assumption";
+export type EvidenceSource = "user" | "workspace" | "clarification";
 
 export interface EvidenceItem {
   id: string;
@@ -35,11 +23,9 @@ export interface ContextPack {
   workspace: WorkspaceContext;
   evidence: EvidenceItem[];
   gaps: string[];
-  assumptionMode: "ask" | "illustrative";
 }
 
 export interface AssetPlan {
-  /** Client key assigned by the server. */
   id: string;
   kind: AssetKind;
   title: string;
@@ -53,7 +39,6 @@ export interface AssetPlan {
   dependencies: string[];
 }
 
-/** Retained for code that imports the previous name. */
 export type PlanAsset = AssetPlan;
 
 export interface PackageBrief {
@@ -61,6 +46,8 @@ export interface PackageBrief {
   audience: string;
   decision: string;
   timing: string;
+  knownDetails: string[];
+  openInputs: string[];
   sharedTerms: string[];
   consistencyRules: string[];
 }
@@ -98,50 +85,24 @@ export interface WorkspaceContext {
 export interface WorkspaceRequestPayload {
   request: string;
   workspaceContext: WorkspaceContext;
-  assumptionMode?: "ask" | "illustrative";
+  openInputs?: string[];
 }
 
 export interface DraftRequestPayload extends WorkspaceRequestPayload {
   kind: AssetKind;
   title: string;
   assetPlan?: AssetPlan;
+  brief?: PackageBrief;
   revisionInstruction?: string;
   previousDraft?: AssetDraft;
 }
 
-export interface Slide {
-  eyebrow: string;
-  title: string;
-  bullets: string[];
-}
-
-export interface DocSection {
-  heading: string;
-  body: string[];
-}
-
-export interface TableData {
-  columns: string[];
-  rows: string[][];
-}
-
-export interface AgendaItem {
-  time: string;
-  topic: string;
-  owner: string;
-}
-
-export interface ActionItem {
-  task: string;
-  owner: string;
-  due: string;
-}
-
-export interface TimelinePhase {
-  phase: string;
-  window: string;
-  detail: string;
-}
+export interface Slide { eyebrow: string; title: string; bullets: string[] }
+export interface DocSection { heading: string; body: string[] }
+export interface TableData { columns: string[]; rows: string[][] }
+export interface AgendaItem { time: string; topic: string; owner: string }
+export interface ActionItem { task: string; owner: string; due: string }
+export interface TimelinePhase { phase: string; window: string; detail: string }
 
 export interface QualityIssue {
   code: string;

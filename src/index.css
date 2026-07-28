@@ -2394,3 +2394,30 @@ h2.display {
   .cx__avatar { display: none; }
   .cx__clarify { margin-left: 0; }
 }
+
+/* Proposal review and explicit open-input states. */
+.cx__review-screen { overflow-y: auto; }
+.cx__review-card { max-width: 760px; }
+.cx__review-list {
+  display: flex; flex-direction: column; gap: 6px; margin-top: 18px;
+  padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  font-family: var(--font-ui); font-size: .82rem; color: var(--ink-2);
+}
+.cx__review-list strong { color: var(--ink); font-size: .76rem; letter-spacing: .08em; text-transform: uppercase; }
+.cx__review-list--open { background: var(--bg-2); border-color: var(--accent); }
+.cx__review-assets { display: grid; gap: 8px; margin-top: 18px; }
+.cx__review-asset {
+  display: flex; gap: 11px; align-items: flex-start; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: var(--r-sm); cursor: pointer;
+  font-family: var(--font-ui); color: var(--ink-2);
+}
+.cx__review-asset input { margin-top: 3px; accent-color: var(--ink); }
+.cx__review-asset span { display: flex; flex-direction: column; gap: 3px; }
+.cx__review-asset b { color: var(--ink); font-size: .86rem; }
+.cx__review-asset small { font-size: .78rem; line-height: 1.4; }
+.cx__drawer-revise { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.cx__drawer-revise input {
+  width: 155px; min-width: 0; border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: 8px 9px; font: 500 .76rem var(--font-ui); color: var(--ink); background: var(--surface);
+}
+@media (max-width: 640px) { .cx__drawer-revise input { width: 110px; } }

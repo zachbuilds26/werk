@@ -12,13 +12,13 @@ export default function Hero({ onLaunch }: HeroProps) {
             Professional workspace
           </span>
           <h1 className="display hero__title reveal" style={{ transitionDelay: "90ms" }}>
-            One brief.
+One request.
             <br />
-            <em>All assets ready.</em>
+            <em>Your work, organised.</em>
           </h1>
           <p className="lead hero__sub reveal" style={{ transitionDelay: "140ms" }}>
-            Describe the outcome you need in plain language. WERK coordinates the work and returns
-            a complete set of business-ready assets.
+            Describe the outcome you need in plain language. WERK suggests the useful documents,
+            plans, and trackers, then helps you turn them into a clear draft.
           </p>
           <div className="hero__cta reveal" style={{ transitionDelay: "190ms" }}>
             <button className="btn btn--primary btn--lg" onClick={onLaunch}>

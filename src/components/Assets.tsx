@@ -10,14 +10,14 @@ import {
 } from "./icons"
 
 const types = [
-  { Icon: Presentation, name: "Presentations", desc: "Board decks and review slides." },
-  { Icon: Document, name: "Executive summaries", desc: "One-page summaries that land the point." },
-  { Icon: Sheet, name: "Spreadsheets", desc: "Models, plans, and trackers." },
-  { Icon: Calendar, name: "Meeting agendas", desc: "Agendas with time and owners." },
-  { Icon: List, name: "Action items", desc: "Tasks, owners, and due dates." },
-  { Icon: Timeline, name: "Project timelines", desc: "Sequenced plans with milestones." },
-  { Icon: Brief, name: "Briefs", desc: "Creative, project, and strategy briefs." },
-  { Icon: Report, name: "Reports", desc: "Status, research, and postmortems." },
+  { Icon: Presentation, name: "Presentations", desc: "Pitches, updates, and clear slide stories." },
+  { Icon: Document, name: "Documents", desc: "Proposals, plans, briefs, and guides." },
+  { Icon: Sheet, name: "Spreadsheets", desc: "Trackers, templates, comparisons, and budgets." },
+  { Icon: Calendar, name: "Meeting plans", desc: "Useful agendas with the right open questions." },
+  { Icon: List, name: "Task lists", desc: "Practical next steps that keep gaps visible." },
+  { Icon: Timeline, name: "Schedules", desc: "Sequenced plans with milestones to confirm." },
+  { Icon: Brief, name: "Project briefs", desc: "A shared starting point for focused work." },
+  { Icon: Report, name: "Summaries", desc: "Clear updates, research notes, and handovers." },
 ]
 
 export default function Assets() {
@@ -25,11 +25,10 @@ export default function Assets() {
     <section className="section section--alt" id="assets">
       <div className="container">
         <div className="section__head section__head--center reveal">
-          <span className="eyebrow eyebrow--center">What WERK produces</span>
-          <h2 className="display section__title">A package, not a single file.</h2>
+          <span className="eyebrow eyebrow--center">What WERK can create</span>
+          <h2 className="display section__title">The right outputs, not more files.</h2>
           <p className="lead">
-            Each request resolves into the full set of assets the job requires, made together so
-            they agree.
+            WERK suggests a small set of documents and plans for the outcome you describe. You review the suggestion before it writes.
           </p>
         </div>
         <div className="assets reveal">
@@ -37,9 +36,7 @@ export default function Assets() {
             const Icon = t.Icon
             return (
               <div className="asset-type" key={t.name}>
-                <span className="asset-type__icon">
-                  <Icon size={19} />
-                </span>
+                <span className="asset-type__icon"><Icon size={19} /></span>
                 <h3 className="asset-type__name">{t.name}</h3>
                 <p className="asset-type__desc">{t.desc}</p>
               </div>
