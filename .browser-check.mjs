@@ -83,6 +83,14 @@ await page.type('textarea[placeholder="Independent web designer for small busine
 await page.type('textarea[placeholder="Client proposals, launch plans, and project handovers"]', "Client proposals and project handovers");
 await page.evaluate(() => Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.includes("Save workspace"))?.click());
 await page.waitForSelector(".cx__greeting");
+await page.waitForSelector(".cx__first-use-guide");
+assert.equal((await text(page, ".cx__first-use-guide")).includes("How WERK works"), true);
+await page.screenshot({ path: ".shots/werk-first-use.png", fullPage: true });
+await page.evaluate(() => Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.includes("Got it"))?.click());
+await page.waitForFunction(() => !document.querySelector(".cx__first-use-guide"));
+await page.reload({ waitUntil: "networkidle2" });
+await page.waitForSelector(".cx__greeting");
+assert.equal(await page.$(".cx__first-use-guide"), null);
 await page.type(".cx__input", "Create a proposal for a new website client");
 await page.keyboard.press("Enter");
 await page.waitForSelector(".cx__clarify");

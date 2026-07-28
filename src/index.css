@@ -1781,6 +1781,58 @@ h2.display {
   color: var(--muted);
   max-width: 46ch;
 }
+
+/* First-use orientation stays in the empty-state flow, so it never blocks work. */
+.cx__first-use-guide {
+  width: min(100%, 620px);
+  position: relative;
+  margin: 22px 0 18px;
+  padding: 18px 20px;
+  text-align: left;
+  border: 1.5px solid var(--line);
+  border-radius: 20px;
+  background: var(--bg-2);
+  box-shadow: var(--shadow-sm);
+}
+.cx__first-use-head { padding-right: 34px; }
+.cx__first-use-kicker {
+  font-family: var(--font-ui); font-weight: 700; font-size: .68rem;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--ink-2);
+}
+.cx__first-use-head h2 {
+  margin-top: 5px; font-family: var(--font-display); font-weight: 600;
+  font-size: 1.2rem; letter-spacing: -.015em; color: var(--ink);
+}
+.cx__first-use-close {
+  position: absolute; top: 12px; right: 12px; width: 28px; height: 28px;
+  display: grid; place-items: center; border: 0; border-radius: 50%;
+  color: var(--muted); background: transparent; font: 500 1.35rem/1 var(--font-ui);
+}
+.cx__first-use-close:hover, .cx__first-use-close:focus-visible { color: var(--ink); background: var(--surface); outline: none; }
+.cx__first-use-steps {
+  display: grid; gap: 10px; margin: 15px 0 12px; padding: 0; list-style: none;
+  counter-reset: first-use-step;
+}
+.cx__first-use-steps li {
+  position: relative; min-height: 30px; padding-left: 40px; font-family: var(--font-ui);
+  font-weight: 500; font-size: .82rem; line-height: 1.4; color: var(--ink-2);
+}
+.cx__first-use-steps li::before {
+  counter-increment: first-use-step; content: counter(first-use-step);
+  position: absolute; left: 0; top: 0; width: 26px; height: 26px; display: grid; place-items: center;
+  border-radius: 50%; background: var(--surface); border: 1px solid var(--line); color: var(--ink);
+  font: 700 .7rem var(--font-ui);
+}
+.cx__first-use-steps b { display: block; color: var(--ink); font-weight: 600; }
+.cx__first-use-steps span { display: block; margin-top: 1px; }
+.cx__first-use-note { font: 500 .74rem/1.4 var(--font-ui); color: var(--muted); }
+.cx__first-use-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.cx__first-use-actions .btn { min-height: 34px; padding: 7px 12px; font-size: .78rem; }
+@media (max-width: 640px) {
+  .cx__first-use-guide { margin-top: 18px; padding: 16px; border-radius: 18px; }
+  .cx__first-use-actions { justify-content: stretch; }
+  .cx__first-use-actions .btn { flex: 1; justify-content: center; }
+}
 .cx__examples {
   margin-top: 22px;
   display: flex;

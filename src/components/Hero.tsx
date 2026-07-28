@@ -12,9 +12,9 @@ export default function Hero({ onLaunch }: HeroProps) {
             Professional workspace
           </span>
           <h1 className="display hero__title reveal" style={{ transitionDelay: "90ms" }}>
-One request.
+            One request.
             <br />
-            <em>Your work, organised.</em>
+            <em>Your work,&nbsp;organised.</em>
           </h1>
           <p className="lead hero__sub reveal" style={{ transitionDelay: "140ms" }}>
             Describe the outcome you need in plain language. WERK suggests the useful documents,

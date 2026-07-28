@@ -48,6 +48,7 @@ interface StudioProps { onBack: () => void }
 // localStorage key for the persisted session (the package survives a refresh).
 const STORAGE_KEY = "werk.session.v1"
 const WORKSPACE_STORAGE_KEY = "werk.workspace.v1"
+const FIRST_USE_GUIDE_STORAGE_KEY = "werk.studio-first-use-guide.v1"
 
 const EMPTY_WORKSPACE_DRAFT: WorkspaceDraft = {
   organizationName: "",
@@ -64,6 +65,14 @@ const EXAMPLES = [
   "Prepare a project kickoff for a new client.",
   "Make a job-search plan for a product manager role.",
 ]
+
+function hasSeenFirstUseGuide(): boolean {
+  try { return localStorage.getItem(FIRST_USE_GUIDE_STORAGE_KEY) === "1" } catch { return false }
+}
+
+function markFirstUseGuideSeen(): void {
+  try { localStorage.setItem(FIRST_USE_GUIDE_STORAGE_KEY, "1") } catch { /* browser storage is optional */ }
+}
 
 function readWorkspaceContext(): WorkspaceContext | null {
   try {
@@ -141,6 +150,8 @@ export default function Studio({ onBack }: StudioProps) {
     initialWorkspace ? workspaceToDraft(initialWorkspace) : EMPTY_WORKSPACE_DRAFT,
   )
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(initialWorkspace ? null : "setup")
+  const [firstUseGuideSeen, setFirstUseGuideSeen] = useState(hasSeenFirstUseGuide)
+  const [showFirstUseGuide, setShowFirstUseGuide] = useState(false)
   const [phase, setPhase] = useState<Phase>("empty")
   const [history, setHistory] = useState<ChatTurn[]>([])
   const [request, setRequest] = useState("")
@@ -162,6 +173,21 @@ export default function Studio({ onBack }: StudioProps) {
   const genRequestRef = useRef("")
 
   useEffect(() => () => abortRef.current?.abort(), [])
+
+  useEffect(() => {
+    if (!firstUseGuideSeen && workspace && !workspaceMode && phase === "empty") {
+      setShowFirstUseGuide(true)
+      setFirstUseGuideSeen(true)
+      markFirstUseGuideSeen()
+    }
+  }, [firstUseGuideSeen, workspace, workspaceMode, phase])
+
+  useEffect(() => {
+    if (!showFirstUseGuide) return
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setShowFirstUseGuide(false) }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [showFirstUseGuide])
 
   /* ---- persistence: restore the active conversation on refresh ---- */
   useEffect(() => {
@@ -239,6 +265,8 @@ export default function Studio({ onBack }: StudioProps) {
     setWorkspaceDraft(workspace ? workspaceToDraft(workspace) : EMPTY_WORKSPACE_DRAFT)
     setWorkspaceMode(null)
   }
+
+  const dismissFirstUseGuide = () => setShowFirstUseGuide(false)
 
   const start = (text: string) => {
     const value = text.trim()
@@ -440,7 +468,7 @@ export default function Studio({ onBack }: StudioProps) {
                 workspaceName={workspace?.organizationName}
               />
             ) : phase === "empty" ? (
-              <Empty onStart={start} />
+              <Empty onStart={start} showFirstUseGuide={showFirstUseGuide} onDismissFirstUseGuide={dismissFirstUseGuide} />
             ) : phase === "planning" && plan ? (
               <PackageReview plan={plan} onChange={setPlan} onCreate={approvePlan} />
             ) : (
@@ -506,7 +534,7 @@ function SideItem({
 }
 
 /* ---- empty state: centered greeting + composer ---- */
-function Empty({ onStart }: { onStart: (text: string) => void }) {
+function Empty({ onStart, showFirstUseGuide, onDismissFirstUseGuide }: { onStart: (text: string) => void; showFirstUseGuide: boolean; onDismissFirstUseGuide: () => void }) {
   return (
     <div className="cx__empty">
       <div className="cx__empty-inner">
@@ -514,6 +542,7 @@ function Empty({ onStart }: { onStart: (text: string) => void }) {
         <p className="cx__greeting-sub">
           Describe the outcome in plain language. WERK suggests the useful documents and plans, then lets you review them before it writes.
         </p>
+        {showFirstUseGuide && <FirstUseGuide onDismiss={onDismissFirstUseGuide} />}
         <Composer onSend={onStart} large autoFocus />
         <div className="cx__examples">
           {EXAMPLES.map((ex) => (
@@ -522,6 +551,28 @@ function Empty({ onStart }: { onStart: (text: string) => void }) {
         </div>
       </div>
     </div>
+  )
+}
+
+function FirstUseGuide({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <aside className="cx__first-use-guide" aria-label="How WERK works">
+      <button className="cx__first-use-close" onClick={onDismiss} aria-label="Dismiss guide">×</button>
+      <div className="cx__first-use-head">
+        <span className="cx__first-use-kicker">New here?</span>
+        <h2>How WERK works</h2>
+      </div>
+      <ol className="cx__first-use-steps">
+        <li><b>Describe the outcome.</b><span>Tell WERK what you are trying to do.</span></li>
+        <li><b>Keep the important details honest.</b><span>Answer the useful questions, or leave an input visibly open.</span></li>
+        <li><b>Review, then create.</b><span>Choose the suggested outputs before WERK drafts them.</span></li>
+      </ol>
+      <p className="cx__first-use-note">Your saved details stay in this browser.</p>
+      <div className="cx__first-use-actions">
+        <button className="btn btn--ghost" onClick={onDismiss}>Skip</button>
+        <button className="btn btn--primary" onClick={onDismiss}>Got it <Arrow size={14} className="arrow" /></button>
+      </div>
+    </aside>
   )
 }
 
