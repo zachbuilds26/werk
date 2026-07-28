@@ -2,13 +2,13 @@ const steps = [
   {
     num: "01",
     title: "Describe",
-    body: "Say what you need in your own words. WERK asks only for the details that change the result.",
+    body: "Say what you need in your own words. Werk asks only for the details that change the result.",
     chip: "Plain language",
   },
   {
     num: "02",
     title: "Review",
-    body: "WERK suggests a small set of useful outputs. You choose what to create and keep missing details visible.",
+    body: "Werk suggests a small set of useful outputs. You choose what to create and keep missing details visible.",
     chip: "You stay in control",
   },
   {
@@ -27,7 +27,7 @@ export default function HowItWorks() {
           <span className="eyebrow eyebrow--center">How it works</span>
           <h2 className="display section__title">Three steps. Zero busywork.</h2>
           <p className="lead">
-            WERK runs like software, not a chat. Make a request and it returns a finished package.
+            Werk runs like software, not a chat. Make a request and it returns a finished package.
           </p>
         </div>
         <div className="steps reveal">

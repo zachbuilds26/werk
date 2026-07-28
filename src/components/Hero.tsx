@@ -17,7 +17,7 @@ export default function Hero({ onLaunch }: HeroProps) {
             <em>Your work,&nbsp;organised.</em>
           </h1>
           <p className="lead hero__sub reveal" style={{ transitionDelay: "140ms" }}>
-            Describe the outcome you need in plain language. WERK suggests the useful documents,
+            Describe the outcome you need in plain language. Werk suggests the useful documents,
             plans, and trackers, then helps you turn them into a clear draft.
           </p>
           <div className="hero__cta reveal" style={{ transitionDelay: "190ms" }}>

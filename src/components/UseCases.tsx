@@ -25,8 +25,8 @@ export default function UseCases() {
       <div className="container">
         <div className="section__head section__head--center reveal">
           <span className="eyebrow eyebrow--center">Start with a sentence</span>
-          <h2 className="display section__title">Tell WERK what you are trying to do.</h2>
-          <p className="lead">A few everyday professional requests, and the useful outputs WERK can suggest.</p>
+          <h2 className="display section__title">Tell Werk what you are trying to do.</h2>
+          <p className="lead">A few everyday professional requests, and the useful outputs Werk can suggest.</p>
         </div>
         <div className="cases">
           {cases.map((c) => (

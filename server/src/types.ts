@@ -1,4 +1,4 @@
-// Shared domain shapes for the WERK API. The model may propose a package, but
+// Shared domain shapes for the Werk API. The model may propose a package, but
 // user-provided context and open inputs remain visible through every draft.
 
 export type AssetKind = "deck" | "document" | "sheet" | "agenda" | "actions" | "timeline";

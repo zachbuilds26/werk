@@ -1,5 +1,5 @@
 /**
- * WERK logo — the supplied mark (a light-blue ascending three-bar glyph: one
+ * Werk logo — the supplied mark (a light-blue ascending three-bar glyph: one
  * request rising into the whole package) set beside the lowercase "werk"
  * wordmark in Bricolage Grotesque. The mark is a PNG in /public; the wordmark
  * stays live text so it inherits the brand font and colour.

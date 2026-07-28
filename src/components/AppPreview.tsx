@@ -1,177 +1,103 @@
-import { useEffect, useRef, useState } from "react"
-import {
-  Presentation, Document, Sheet, Calendar, List, Timeline,
-  Brief, Check, Arrow, Layers,
-} from "./icons"
+﻿import { useEffect, useRef, useState } from "react"
+import { Calendar, Check, Document, Layers, Mark, Presentation, Sheet } from "./icons"
+
+const DELIVERABLES = [
+  { Icon: Presentation, title: "Client presentation", meta: "8 slides" },
+  { Icon: Document, title: "Project proposal", meta: "4 sections" },
+  { Icon: Sheet, title: "Scope tracker", meta: "12 tasks" },
+]
 
 /**
- * Hero product proof — a WERK workspace rendered in CSS, not a screenshot.
- * Plays a scripted story once the card scrolls into view: type a request ->
- * WERK drafts the board pack -> a macOS cursor clicks "Open the board pack" ->
- * the chat swaps to a board-presentation preview -> the cursor picks a slide ->
- * "Delivered".
- *
- * The whole timeline is CSS (keyframes + delays) gated on one `is-playing`
- * class that an IntersectionObserver adds when the card enters the viewport.
- * Base CSS is a coherent static state (the request, the reply, the chip), so
- * the card reads correctly with no JS and under prefers-reduced-motion.
+ * A deliberately quiet product-film sequence. The visual is real UI rather
+ * than a video file: it remains sharp at every size, loads instantly, and is
+ * fully disabled for people who prefer reduced motion.
  */
-
-const ASSETS = [
-  { Icon: Presentation, name: "Client presentation" },
-  { Icon: Document, name: "Project proposal" },
-  { Icon: Sheet, name: "Scope tracker" },
-  { Icon: Calendar, name: "Meeting plan" },
-  { Icon: List, name: "Task list" },
-  { Icon: Timeline, name: "Project schedule" },
-]
-
-const ACTIONS = [
-  { Icon: Brief, label: "Plan" },
-  { Icon: Presentation, label: "Slides" },
-  { Icon: Sheet, label: "Tracker" },
-]
-
-/** Classic macOS pointing hand — flies in from the lower-right of its target,
- *  dips to "click", then fades. Shown only while the timeline plays. */
-function Cursor({ className }: { className?: string }) {
-  return (
-    <svg className={`apv__cursor${className ? ` ${className}` : ""}`} viewBox="0 0 26 32" aria-hidden="true">
-      <path
-        d="M6.8 7 C6.8 4 10.2 4 10.2 7 L10.2 12 C10.6 11 12.9 11 12.9 12.6
-           C12.9 11.4 15.2 11.4 15.2 13 C15.2 11.9 17.5 12 19.6 12.4
-           C21 12.7 20.4 15.2 20.4 17 L20.4 20.5 C20.4 27 16 30.5 11.5 29.8
-           C7.5 29.2 5 26 4 22 L2.6 16.8 C2 14.6 3.4 13.4 5 14.2 L6.8 15.2 Z"
-        fill="#ffffff"
-        stroke="#0e1726"
-        strokeWidth="1.9"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-      <path
-        d="M10.3 16.5 L10.3 21 M13 16.5 L13 21 M15.7 16.5 L15.7 21"
-        stroke="#0e1726"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
-}
-
 export default function AppPreview() {
   const ref = useRef<HTMLDivElement>(null)
   const [playing, setPlaying] = useState(false)
 
   useEffect(() => {
     const el = ref.current
-    if (!el) return
-    if (!("IntersectionObserver" in window)) {
+    if (!el || !("IntersectionObserver" in window)) {
       setPlaying(true)
       return
     }
-    const io = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((e) => {
-          if (e.isIntersecting) {
-            setPlaying(true)
-            io.disconnect()
-          }
-        })
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setPlaying(true)
+          observer.disconnect()
+        }
       },
-      { threshold: 0.2, rootMargin: "0px 0px -8% 0px" }
+      { threshold: 0.18, rootMargin: "0px 0px -7% 0px" },
     )
-    io.observe(el)
-    return () => io.disconnect()
+    observer.observe(el)
+    return () => observer.disconnect()
   }, [])
 
   return (
-    <div ref={ref} className={`apv${playing ? " is-playing" : ""}`} aria-hidden="true">
-      {/* window chrome */}
-      <div className="apv__bar">
-        <i /><i /><i />
-        <span className="apv__title">werk — Client proposal</span>
-        <span className="apv__pill">4 outputs</span>
-      </div>
+    <div ref={ref} className={`apv${playing ? " is-playing" : ""}`} aria-label="Animated Werk product preview">
+      <div className="apv__ambient apv__ambient--one" />
+      <div className="apv__ambient apv__ambient--two" />
+      <div className="apv__window">
+        <header className="apv__bar">
+          <span className="apv__dots"><i /><i /><i /></span>
+          <span className="apv__wordmark">werk</span>
+          <span className="apv__bar-title">New client workspace</span>
+          <span className="apv__status"><i /> Live</span>
+        </header>
 
-      <div className="apv__body">
-        {/* sidebar — the package WERK assembled */}
-        <aside className="apv__side">
-          <p className="apv__side-label"><Layers size={12} /> Assets</p>
-          {ASSETS.map((a, i) => {
-            const Icon = a.Icon
-            return (
-              <div
-                className={`apv__side-item${i === 0 ? " is-active" : ""}`}
-                key={a.name}
-                style={{ animationDelay: `${0.12 + i * 0.06}s` }}
-              >
-                <Icon size={14} />
-                {a.name}
-              </div>
-            )
-          })}
-          <div className="apv__side-actions">
-            {ACTIONS.map((a) => {
-              const Icon = a.Icon
-              return (
-                <span key={a.label}><Icon size={12} /> {a.label}</span>
-              )
-            })}
-          </div>
-        </aside>
+        <div className="apv__body">
+          <aside className="apv__side">
+            <p className="apv__side-label"><Layers size={12} /> Workspace</p>
+            <span className="apv__nav-item is-active"><Mark size={14} /> New request</span>
+            <span className="apv__nav-item"><Calendar size={14} /> This week</span>
+            <div className="apv__side-rule" />
+            <p className="apv__side-label">In this package</p>
+            {DELIVERABLES.map(({ Icon, title, meta }, index) => (
+              <span className="apv__side-file" style={{ animationDelay: `${4.9 + index * 0.13}s` }} key={title}>
+                <Icon size={13} /><span>{title}</span><small>{meta}</small>
+              </span>
+            ))}
+          </aside>
 
-        {/* chat — two scenes cross-fade inside a fixed stage */}
-        <div className="apv__chat">
-          <div className="apv__stage">
-            {/* scene 1 — the request, the reply, the chip the cursor clicks */}
-            <div className="apv__scene apv__scene-chat">
-              <div className="apv__msg apv__msg-user">
-                I need a proposal for a new website client.
-              </div>
+          <div className="apv__main">
+            <div className="apv__eyebrow"><span /> Request</div>
+            <div className="apv__prompt">
+              <p>I need a proposal for a new website client.</p>
+              <span className="apv__sent"><Check size={11} /> Sent</span>
+            </div>
 
-              <div className="apv__typing"><i /><i /><i /></div>
-
-              <div className="apv__msg apv__msg-ai">
-                I&apos;ve suggested your <em>client proposal</em>. Review the outputs before I draft them.
-              </div>
-
-              <div className="apv__chip-wrap">
-                <span className="apv__chip">
-                  <span className="apv__chip-fill" />
-                  <Presentation size={13} />
-                  <span className="apv__chip-text">Review the suggestion</span>
-                </span>
-                <Cursor />
+            <div className="apv__response">
+              <div className="apv__assistant-mark"><Mark size={14} /></div>
+              <div className="apv__response-copy">
+                <p>Building a clear, ready-to-review package.</p>
+                <div className="apv__scan"><i /><i /><i /></div>
               </div>
             </div>
 
-            {/* scene 2 — the board-presentation preview; fades in on top of
-                scene 1 once the cursor has "clicked" the chip */}
-            <div className="apv__scene apv__scene-pack">
-              <div className="apv__pack">
-                <p className="apv__pack-head"><Presentation size={12} /> Client presentation · 8 slides</p>
-                <div className="apv__slide">
-                  <span className="apv__slide-eyebrow">Website redesign</span>
-                  <span className="apv__slide-title">A clear proposal,<br />ready to review.</span>
-                </div>
-                <div className="apv__thumbs">
-                  <div className="apv__thumb" />
-                  <div className="apv__thumb is-active">
-                    <span className="apv__thumb-check"><Check size={11} /></span>
-                    <Cursor className="apv__cursor--slide" />
-                  </div>
-                  <div className="apv__thumb" />
-                </div>
-                <p className="apv__pack-result"><Check size={12} /> Draft ready — details stay visible to confirm.</p>
+            <section className="apv__package">
+              <div className="apv__package-head">
+                <span><Mark size={13} /> Suggested package</span>
+                <small>3 items</small>
               </div>
-            </div>
-          </div>
-
-          <div className="apv__input">
-            <span>Describe what you need…</span>
-            <Arrow size={14} />
+              <div className="apv__cards">
+                {DELIVERABLES.map(({ Icon, title, meta }, index) => (
+                  <article className="apv__card" style={{ animationDelay: `${3.4 + index * 0.17}s` }} key={title}>
+                    <span className="apv__card-icon"><Icon size={15} /></span>
+                    <span className="apv__card-copy"><b>{title}</b><small>{meta} prepared</small></span>
+                    <span className="apv__card-ready"><Check size={12} /></span>
+                  </article>
+                ))}
+              </div>
+              <div className="apv__finish"><Check size={12} /> Ready to refine</div>
+            </section>
           </div>
         </div>
+      </div>
+      <div className="apv__timeline" aria-hidden="true">
+        <span className="is-current"><i /> Ask</span><span><i /> Shape</span><span><i /> Ready</span>
+        <div><b /></div>
       </div>
     </div>
   )

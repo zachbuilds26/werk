@@ -5,7 +5,7 @@ import Logo from "./Logo"
 interface NavProps { onLaunch?: () => void }
 
 const links = [
-  { href: "#assets", label: "Product", desc: "What WERK makes for you" },
+  { href: "#assets", label: "Product", desc: "What Werk makes for you" },
   { href: "#how", label: "How it works", desc: "From one request to a full package" },
   { href: "#cases", label: "Use cases", desc: "Real requests, real outputs" },
 ]

@@ -177,8 +177,6 @@ export default function Studio({ onBack }: StudioProps) {
   useEffect(() => {
     if (!firstUseGuideSeen && workspace && !workspaceMode && phase === "empty") {
       setShowFirstUseGuide(true)
-      setFirstUseGuideSeen(true)
-      markFirstUseGuideSeen()
     }
   }, [firstUseGuideSeen, workspace, workspaceMode, phase])
 
@@ -266,7 +264,11 @@ export default function Studio({ onBack }: StudioProps) {
     setWorkspaceMode(null)
   }
 
-  const dismissFirstUseGuide = () => setShowFirstUseGuide(false)
+  const dismissFirstUseGuide = () => {
+    setShowFirstUseGuide(false)
+    setFirstUseGuideSeen(true)
+    markFirstUseGuideSeen()
+  }
 
   const start = (text: string) => {
     const value = text.trim()
@@ -407,7 +409,7 @@ export default function Studio({ onBack }: StudioProps) {
         </div>
 
         <div className="cx__body">
-          {/* sidebar — the package WERK assembled (hidden on narrow viewports) */}
+          {/* sidebar — the package Werk assembled (hidden on narrow viewports) */}
           <aside className="cx__side">
             <p className="cx__side-label"><Layers size={12} /> Outputs</p>
             <div className="cx__side-list">
@@ -540,7 +542,7 @@ function Empty({ onStart, showFirstUseGuide, onDismissFirstUseGuide }: { onStart
       <div className="cx__empty-inner">
         <h1 className="cx__greeting">What do you need?</h1>
         <p className="cx__greeting-sub">
-          Describe the outcome in plain language. WERK suggests the useful documents and plans, then lets you review them before it writes.
+          Describe the outcome in plain language. Werk suggests the useful documents and plans, then lets you review them before it writes.
         </p>
         {showFirstUseGuide && <FirstUseGuide onDismiss={onDismissFirstUseGuide} />}
         <Composer onSend={onStart} large autoFocus />
@@ -556,23 +558,25 @@ function Empty({ onStart, showFirstUseGuide, onDismissFirstUseGuide }: { onStart
 
 function FirstUseGuide({ onDismiss }: { onDismiss: () => void }) {
   return (
-    <aside className="cx__first-use-guide" aria-label="How WERK works">
-      <button className="cx__first-use-close" onClick={onDismiss} aria-label="Dismiss guide">×</button>
-      <div className="cx__first-use-head">
-        <span className="cx__first-use-kicker">New here?</span>
-        <h2>How WERK works</h2>
-      </div>
-      <ol className="cx__first-use-steps">
-        <li><b>Describe the outcome.</b><span>Tell WERK what you are trying to do.</span></li>
-        <li><b>Keep the important details honest.</b><span>Answer the useful questions, or leave an input visibly open.</span></li>
-        <li><b>Review, then create.</b><span>Choose the suggested outputs before WERK drafts them.</span></li>
-      </ol>
-      <p className="cx__first-use-note">Your saved details stay in this browser.</p>
-      <div className="cx__first-use-actions">
-        <button className="btn btn--ghost" onClick={onDismiss}>Skip</button>
-        <button className="btn btn--primary" onClick={onDismiss}>Got it <Arrow size={14} className="arrow" /></button>
-      </div>
-    </aside>
+    <div className="cx__first-use-layer">
+      <aside className="cx__first-use-guide" aria-label="How Werk works">
+        <button className="cx__first-use-close" onClick={onDismiss} aria-label="Dismiss guide">×</button>
+        <div className="cx__first-use-head">
+          <span className="cx__first-use-kicker">New here?</span>
+          <h2>How Werk works</h2>
+        </div>
+        <ol className="cx__first-use-steps">
+          <li><b>Describe the outcome.</b><span>Tell Werk what you are trying to do.</span></li>
+          <li><b>Keep the important details honest.</b><span>Answer the useful questions, or leave an input visibly open.</span></li>
+          <li><b>Review, then create.</b><span>Choose the suggested outputs before Werk drafts them.</span></li>
+        </ol>
+        <p className="cx__first-use-note">Your saved details stay in this browser.</p>
+        <div className="cx__first-use-actions">
+          <button className="btn btn--ghost" onClick={onDismiss}>Skip</button>
+          <button className="btn btn--primary" onClick={onDismiss}>Got it <Arrow size={15} className="arrow" /></button>
+        </div>
+      </aside>
+    </div>
   )
 }
 
@@ -586,8 +590,8 @@ function PackageReview({ plan, onChange, onCreate }: { plan: PackagePlan; onChan
     <div className="cx__setup-screen cx__review-screen">
       <div className="cx__setup-card cx__review-card">
         <p className="cx__setup-kicker">Suggested outputs</p>
-        <h1 className="cx__setup-title">Review before WERK writes</h1>
-        <p className="cx__setup-copy">WERK will use only the details shown below. Anything else stays marked as needing your input.</p>
+        <h1 className="cx__setup-title">Review before Werk writes</h1>
+        <p className="cx__setup-copy">Werk will use only the details shown below. Anything else stays marked as needing your input.</p>
         <div className="cx__setup-grid">
           <WorkspaceField label="What you need to achieve" value={plan.brief.objective} onChange={(value) => updateBrief("objective", value)} placeholder="The outcome you need" required wide />
           <WorkspaceField label="Who this is for" value={plan.brief.audience} onChange={(value) => updateBrief("audience", value)} placeholder="Needs your input: audience" wide />
@@ -633,6 +637,18 @@ function Thread({
 }) {
   const doneCount = Object.values(drafts).filter((d) => d.done).length
   const total = plan?.assets.length ?? 0
+  const activeAsset = plan?.assets.find((asset) => {
+    const status = drafts[asset.id]?.status
+    return status === "drafting" || status === "verifying" || status === "revising"
+  }) ?? plan?.assets.find((asset) => !drafts[asset.id]?.done)
+  const activeStatus = activeAsset ? drafts[activeAsset.id]?.status : undefined
+  const activeIndex = activeAsset ? (plan?.assets.findIndex((asset) => asset.id === activeAsset.id) ?? 0) + 1 : 0
+  const progressVerb = activeStatus === "verifying" ? "Checking" : activeStatus === "revising" ? "Improving" : activeStatus === "queued" ? "Preparing" : "Creating"
+  const progressText = !plan
+    ? "Planning your suggested outputs"
+    : activeAsset
+      ? `${progressVerb} ${activeIndex} of ${total} — ${activeAsset.title}`
+      : `Finishing ${doneCount} of ${total} outputs`
 
   return (
     <>
@@ -651,15 +667,20 @@ function Thread({
               <img src="/werk-mark.png" alt="" />
             </span>
             <div className="cx__ai-body">
-              {!plan && phase === "streaming" && (
-                <div className="cx__thinking"><i /><i /><i /></div>
+              {phase === "streaming" && (
+                <div className="cx__generation-progress" role="status" aria-live="polite">
+                  <span className="cx__spin" aria-hidden="true" />
+                  <span>{progressText}</span>
+                </div>
               )}
 
               {clarify && clarify.reply && !plan && <p className="cx__reply">{clarify.reply}</p>}
 
               {plan && (
                 <>
-                  <p className="cx__reply">{plan.reply}</p>
+                  {/* While assets stream, keep the progress bubble as the live
+                      status — the plan's static reply only appears once done. */}
+                  {phase !== "streaming" && <p className="cx__reply">{plan.reply}</p>}
                   {phase === "ready" && plan.assets.length > 0 && (
                     <div className="cx__chip-wrap">
                       <button className="cx__chip" onClick={() => onOpen(plan.assets[0].id)}>
@@ -769,7 +790,7 @@ function WorkspaceSetup({
           {mode === "setup" ? "Set the workspace context" : "Edit the workspace context"}
         </h1>
         <p className="cx__setup-copy">
-          This gives WERK helpful background for repeat requests. Use your name, team, business, client, or project.
+          This gives Werk helpful background for repeat requests. Use your name, team, business, client, or project.
         </p>
         {workspaceName && mode === "edit" && (
           <p className="cx__setup-note">Editing {workspaceName}.</p>

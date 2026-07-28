@@ -1,4 +1,4 @@
-// Client types + API helpers for the WERK workspace. The server owns the
+// Client types + API helpers for the Werk workspace. The server owns the
 // canonical workspace block; the browser keeps only the user's request and
 // visible open inputs.
 

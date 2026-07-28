@@ -25,10 +25,10 @@ export default function Assets() {
     <section className="section section--alt" id="assets">
       <div className="container">
         <div className="section__head section__head--center reveal">
-          <span className="eyebrow eyebrow--center">What WERK can create</span>
+          <span className="eyebrow eyebrow--center">What Werk can create</span>
           <h2 className="display section__title">The right outputs, not more files.</h2>
           <p className="lead">
-            WERK suggests a small set of documents and plans for the outcome you describe. You review the suggestion before it writes.
+            Werk suggests a small set of documents and plans for the outcome you describe. You review the suggestion before it writes.
           </p>
         </div>
         <div className="assets reveal">

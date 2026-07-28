@@ -244,7 +244,7 @@ app.post("/api/package", async (req, res) => {
       item.draft.metadata?.gaps.forEach((gap) => gaps.add(gap));
     }
     const notes = gaps.size ? `\n\n## Details to confirm\n\n${[...gaps].map((gap) => `- ${gap}`).join("\n")}\n\nThis package is a draft until these details are confirmed.` : "";
-    zip.file("00 INDEX.md", `# ${parsed.data.packageName}\n\n${parsed.data.items.length} outputs assembled by WERK.\n\n${index.join("\n")}${notes}\n`);
+    zip.file("00 INDEX.md", `# ${parsed.data.packageName}\n\n${parsed.data.items.length} outputs assembled by Werk.\n\n${index.join("\n")}${notes}\n`);
     const bytes = await zip.generateAsync({ type: "nodebuffer" });
     const safeName = parsed.data.packageName.replace(/[^a-z0-9\-_ ]/gi, "").trim().slice(0, 60) || "package";
     res.setHeader("Content-Type", "application/zip");

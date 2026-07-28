@@ -176,7 +176,7 @@ function toPdf(d: AssetDraft): Promise<Buffer> {
     layout: landscape ? "landscape" : "portrait",
     margin: 56,
     bufferPages: true,
-    info: { Title: d.title, Author: "WERK" },
+    info: { Title: d.title, Author: "Werk" },
   });
   const bufs: Buffer[] = [];
   doc.on("data", (b: Buffer) => bufs.push(b));
@@ -192,7 +192,7 @@ function toPdf(d: AssetDraft): Promise<Buffer> {
     .font("Helvetica-Bold")
     .fontSize(8)
     .fillColor(HEX.muted)
-    .text("WERK", margin, 26, { lineBreak: false });
+    .text("Werk", margin, 26, { lineBreak: false });
   doc
     .font("Helvetica")
     .fontSize(8)
@@ -344,7 +344,7 @@ function hex(s: string): string {
 async function toPptx(d: AssetDraft): Promise<Buffer> {
   const pres = new (pptxgen as unknown as new () => PptxPres)();
   pres.layout = "LAYOUT_WIDE";
-  pres.author = "WERK";
+  pres.author = "Werk";
   pres.title = d.title;
 
   const INK = hex("#15395C");
@@ -490,7 +490,7 @@ async function toPptx(d: AssetDraft): Promise<Buffer> {
  * ------------------------------------------------------------------ */
 async function toXlsx(d: AssetDraft): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "WERK";
+  wb.creator = "Werk";
   const ws = wb.addWorksheet("Asset");
   ws.views = [{ showGridLines: false }];
 
