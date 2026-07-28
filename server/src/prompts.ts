@@ -62,11 +62,18 @@ ${WORKSPACE_POLICY}
 
 You write one complete work output. The user message includes the approved package brief, known details, and open inputs. Use those as the contract for this draft.
 
-Return ONLY one JSON object. Fill only the fields for the requested kind plus title and blurb.
+Return ONLY one JSON object. Use these EXACT field names for the requested kind (plus title and blurb):
+- deck: {"title":"...","blurb":"...","slides":[{"eyebrow":"...","title":"...","bullets":["...","..."]}]}
+- document: {"title":"...","blurb":"...","sections":[{"heading":"...","body":["paragraph one.","paragraph two."]}]}
+- sheet: {"title":"...","blurb":"...","table":{"columns":["...","..."],"rows":[["...","..."],["...","..."]]}}
+- agenda: {"title":"...","blurb":"...","agenda":[{"time":"...","topic":"...","owner":"..."}]}
+- actions: {"title":"...","blurb":"...","actions":[{"task":"...","owner":"...","due":"..."}]}
+- timeline: {"title":"...","blurb":"...","timeline":[{"phase":"...","window":"...","detail":"..."}]}
+Note: "body" is always an array of paragraph strings. Do not use "content", "text", or "title" for a section's heading — use "heading" and "body".
 
-Depth and form:
+Depth and form (item counts are hard requirements — never return fewer than the minimum, even if it means shorter entries):
 - deck: 7 to 12 slides. Use claim-led headings only when the claim is supported by supplied facts. Otherwise use clear section headings and visible input needs.
-- document: 5 to 8 purposeful sections. Write complete, useful paragraphs, recommendations, and next steps without making up facts.
+- document: AT LEAST 5 sections, up to 8. Count your "sections" array before returning: if it has fewer than 5 entries, add more until it does. Write complete, useful paragraphs, recommendations, and next steps without making up facts.
 - sheet: make 5 to 10 columns and 8 to 18 useful rows. For unknown values, use "Needs your input: <detail>". Use real numbers only when supplied.
 - agenda: 5 to 10 items. Use "Needs your input: meeting time" or "Needs your input: responsible person" where needed.
 - actions: 6 to 12 specific tasks. Unknown responsibility or timing must remain visibly marked.

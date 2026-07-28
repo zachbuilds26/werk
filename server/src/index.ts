@@ -123,7 +123,16 @@ function coerceDraft(raw: unknown, kind: AssetKind, title: string): AssetDraft {
     }).filter((slide) => slide.title || slide.bullets.length).slice(0, 18); break;
     case "document": draft.sections = (Array.isArray(obj.sections) ? obj.sections : []).map((item) => {
       const section = (item ?? {}) as Record<string, unknown>;
-      return { heading: asString(section.heading, 220), body: textList(section.body, 3, 1400) };
+      // Tolerate the model's common aliases so a draft is never emptied by a
+      // field-name mismatch: heading may come back as "title", and the body as
+      // a single "content"/"text" string instead of an array of paragraphs.
+      const heading = asString(section.heading, 220) || asString(section.title, 220);
+      const body = textList(section.body, 6, 1400);
+      if (!body.length) {
+        const content = asString(section.content ?? section.text, 4000);
+        if (content) body.push(...content.split(/\n{2,}|\r?\n/).map((p) => p.trim()).filter(Boolean).slice(0, 6));
+      }
+      return { heading, body };
     }).filter((section) => section.heading || section.body.length).slice(0, 10); break;
     case "sheet": {
       const table = (obj.table ?? {}) as Record<string, unknown>;

@@ -76,9 +76,10 @@ async function groqCall(
 
     if (res.ok) {
       const data = (await res.json()) as {
-        choices?: { message?: { content?: string } }[];
+        choices?: { message?: { content?: string }; finish_reason?: string }[];
       };
-      const text = data.choices?.[0]?.message?.content;
+      const choice = data.choices?.[0];
+      const text = choice?.message?.content;
       if (text) return { text };
       return { action: "fail", error: "Groq returned no content" };
     }
