@@ -4,9 +4,10 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc && npm run copy-fonts",
     "start": "node dist/index.js",
-    "test": "tsx --test src/groq.test.ts src/workspace.test.ts src/quality.test.ts src/prompts.test.ts"
+    "test": "tsx --test src/groq.test.ts src/workspace.test.ts src/quality.test.ts src/prompts.test.ts src/marketplace-token.test.ts src/marketplace.test.ts",
+    "copy-fonts": "node copy-fonts.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",

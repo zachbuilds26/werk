@@ -23,6 +23,24 @@ export const requestPayloadSchema = z.object({
   openInputs: textList(12, 280).optional(),
 }).strict();
 
+const marketplaceWorkspaceContextSchema = workspaceContextSchema.partial().strict();
+const marketplacePlanRequestSchema = z.object({
+  operation: z.literal("plan"),
+  request: text(6000),
+  workspaceContext: marketplaceWorkspaceContextSchema.optional(),
+  openInputs: textList(12, 280).optional(),
+}).strict();
+const marketplaceDraftRequestSchema = z.object({
+  operation: z.literal("draft"),
+  continuationToken: text(64000),
+  assetId: text(80),
+}).strict();
+
+export const marketplaceInvocationSchema = z.discriminatedUnion("operation", [
+  marketplacePlanRequestSchema,
+  marketplaceDraftRequestSchema,
+]);
+
 const slideSchema = z.object({
   eyebrow: text(80), title: text(220), bullets: z.array(text(500)).min(1).max(6),
 }).strict();

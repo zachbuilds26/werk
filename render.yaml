@@ -9,3 +9,11 @@ services:
     envVars:
       - key: GROQ_API_KEY
         sync: false
+      - key: MARKETPLACE_PROVIDER_ENABLED
+        value: "true"
+      - key: MARKETPLACE_TOKEN_SECRET
+        sync: false
+      - key: MARKETPLACE_MAX_CONCURRENT
+        value: "1"
+      - key: MARKETPLACE_RATE_LIMIT_MAX
+        value: "4"

@@ -10,7 +10,35 @@
 import PDFDocument from "pdfkit";
 import pptxgen from "pptxgenjs";
 import ExcelJS from "exceljs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AssetDraft } from "./types.js";
+
+// Brand typeface embedded in the PDF so downloads match the site (Space
+// Grotesk), not the generic Helvetica pdfkit falls back to. Files live beside
+// this module under ./fonts; resolved relative to the compiled output too.
+const FONTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "fonts");
+const FONT = {
+  regular: path.join(FONTS_DIR, "SpaceGrotesk-Regular.ttf"),
+  medium: path.join(FONTS_DIR, "SpaceGrotesk-Medium.ttf"),
+  semibold: path.join(FONTS_DIR, "SpaceGrotesk-SemiBold.ttf"),
+  bold: path.join(FONTS_DIR, "SpaceGrotesk-Bold.ttf"),
+};
+function registerFonts(doc: PDFKit.PDFDocument): void {
+  try {
+    doc.registerFont("body", FONT.regular);
+    doc.registerFont("body-med", FONT.medium);
+    doc.registerFont("head", FONT.semibold);
+    doc.registerFont("head-bold", FONT.bold);
+  } catch {
+    // If the font files are missing (e.g. trimmed deploy), fall back to the
+    // built-in Helvetica so rendering never hard-fails.
+    doc.registerFont("body", "Helvetica");
+    doc.registerFont("body-med", "Helvetica");
+    doc.registerFont("head", "Helvetica-Bold");
+    doc.registerFont("head-bold", "Helvetica-Bold");
+  }
+}
 
 // pptxgenjs ships `export default PptxGenJS` + `export as namespace PptxGenJS`;
 // under NodeNext the default import binds to the namespace, so `new pptxgen()`

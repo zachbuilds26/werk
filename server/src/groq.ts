@@ -53,7 +53,8 @@ async function groqCall(
   apiKey: string,
   system: string,
   user: string,
-  maxTokens: number
+  maxTokens: number,
+  signal?: AbortSignal
 ): Promise<GroqResult> {
   try {
     const res = await fetch(GROQ_URL, {
@@ -62,6 +63,7 @@ async function groqCall(
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
+      signal,
       body: JSON.stringify({
         model: GROQ_MODEL,
         temperature: 0.4,
@@ -98,6 +100,7 @@ async function groqCall(
           : "fail";
     return { action, error, status: res.status };
   } catch (e) {
+    if (signal?.aborted) throw e;
     // Network-level failure (DNS, connection reset, mid-stream timeout). Treat
     // as transient so the retry loop in groqJson can try again.
     return {
@@ -115,7 +118,8 @@ async function groqCall(
 export async function groqJson<T = unknown>(
   system: string,
   user: string,
-  maxTokens = 1500
+  maxTokens = 1500,
+  signal?: AbortSignal
 ): Promise<T> {
   const keys = groqKeys();
   if (keys.length === 0) throw new Error("No Groq API key is set (GROQ_API_KEY)");
@@ -126,7 +130,8 @@ export async function groqJson<T = unknown>(
   const ATTEMPTS_PER_KEY = 3;
   for (const apiKey of keys) {
     for (let attempt = 0; attempt < ATTEMPTS_PER_KEY; attempt++) {
-      const result = await groqCall(apiKey, system, user, maxTokens);
+      if (signal?.aborted) throw new Error("Groq request cancelled");
+      const result = await groqCall(apiKey, system, user, maxTokens, signal);
       if ("text" in result) return extractJson(result.text) as T;
 
       if (result.action === "fail") {
