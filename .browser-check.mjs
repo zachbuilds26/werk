@@ -84,7 +84,7 @@ await page.type('textarea[placeholder="Client proposals, launch plans, and proje
 await page.evaluate(() => Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.includes("Save workspace"))?.click());
 await page.waitForSelector(".cx__greeting");
 await page.waitForSelector(".cx__first-use-guide");
-assert.equal((await text(page, ".cx__first-use-guide")).includes("How WERK works"), true);
+assert.equal((await text(page, ".cx__first-use-guide")).includes("How Werk works"), true);
 await page.screenshot({ path: ".shots/werk-first-use.png", fullPage: true });
 await page.evaluate(() => Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.includes("Got it"))?.click());
 await page.waitForFunction(() => !document.querySelector(".cx__first-use-guide"));
@@ -98,7 +98,7 @@ assert.equal(await text(page, ".cx__clarify-q"), "Who will use this? *");
 await page.evaluate(() => Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.includes("Keep unanswered"))?.click());
 await page.waitForSelector(".cx__review-card");
 assert.equal(generateCalls, 0);
-assert.equal(await text(page, ".cx__setup-title"), "Review before WERK writes");
+assert.equal(await text(page, ".cx__setup-title"), "Review before Werk writes");
 await page.evaluate(() => Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.includes("Create 1 draft"))?.click());
 await waitFor(() => generateCalls === 1, "approved generation");
 await page.waitForSelector(".cx__side-item");

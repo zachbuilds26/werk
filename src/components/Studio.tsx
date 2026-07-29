@@ -196,8 +196,19 @@ export default function Studio({ onBack }: StudioProps) {
         history?: ChatTurn[]; request?: string; plan?: PackagePlan | null;
         drafts?: Record<string, DraftState>; clarify?: ClarifyResult | null;
         clarifyAnswers?: Record<string, string>; openInputs?: string[]; genRequest?: string;
+        phase?: Phase;
       }
       if (!s.request && !s.plan && !s.history?.length) return
+      const restoredPhase: Phase =
+        s.phase === "clarifying" || s.phase === "planning" || s.phase === "ready"
+          ? s.phase
+          : s.clarify && !s.plan
+            ? "clarifying"
+            : s.plan
+              ? Object.values(s.drafts ?? {}).some((draft) => draft?.done)
+                ? "ready"
+                : "planning"
+              : "empty"
       const active = restoreTurn({
         request: s.request || "",
         plan: s.plan ?? null,
@@ -215,7 +226,7 @@ export default function Studio({ onBack }: StudioProps) {
       setClarify(active.clarify)
       setClarifyAnswers(active.clarifyAnswers)
       setOpenInputs(active.openInputs ?? [])
-      setPhase(active.plan ? "ready" : "empty")
+      setPhase(restoredPhase)
     } catch { /* ignore corrupt storage */ }
   }, [])
 
@@ -236,6 +247,7 @@ export default function Studio({ onBack }: StudioProps) {
     const snap = {
       history, request, plan, drafts, clarify, clarifyAnswers, openInputs,
       genRequest: genRequestRef.current,
+      phase: phase === "clarifying" || phase === "planning" || phase === "ready" ? phase : undefined,
     }
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(snap)) } catch { /* ignore quota */ }
   }, [history, request, plan, drafts, clarify, clarifyAnswers, openInputs, phase])

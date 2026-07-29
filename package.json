@@ -8,6 +8,7 @@
     "dev:web": "vite",
     "dev:api": "npm --prefix server run dev",
     "build": "tsc -b && vite build",
+    "test": "npm --prefix server test",
     "preview": "vite preview"
   },
   "dependencies": {
