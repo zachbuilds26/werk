@@ -42,7 +42,7 @@ export default function AppPreview() {
       <div className="apv__window">
         <header className="apv__bar">
           <span className="apv__dots"><i /><i /><i /></span>
-          <span className="apv__wordmark">werk</span>
+          <span className="apv__wordmark">Werk</span>
           <span className="apv__bar-title">New client workspace</span>
           <span className="apv__status"><i /> Live</span>
         </header>
