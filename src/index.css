@@ -1040,7 +1040,7 @@ h2.display {
 .docs__frame {
   aspect-ratio: 16 / 9;
   overflow: hidden;
-  border: 8px solid var(--accent);
+  border: 5px solid var(--accent);
   border-radius: clamp(18px, 2.4vw, 28px);
   background: var(--bg-2);
   box-shadow: var(--shadow-lg);

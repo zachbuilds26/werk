@@ -13,13 +13,13 @@ const overviewCards = [
     Icon: Layers,
     kicker: "Overview",
     title: "One request, one stack",
-    text: "Start with a plain-language request. WERK turns it into a package of related outputs instead of scattering the work across separate chats.",
+    text: "Start with a plain-language request. Werk turns it into a package of related outputs instead of scattering the work across separate chats.",
   },
   {
     Icon: Document,
     kicker: "Workflow",
     title: "Review before write",
-    text: "WERK proposes the package shape first, shows the open inputs, then drafts each asset where you can inspect it.",
+    text: "Werk proposes the package shape first, shows the open inputs, then drafts each asset where you can inspect it.",
   },
   {
     Icon: Report,
@@ -33,7 +33,7 @@ const reviewCards = [
   {
     kicker: "Clarify",
     title: "Ask only what matters",
-    text: "Short requests can move straight to planning. When a missing detail changes the result, WERK asks a focused question instead of guessing.",
+    text: "Short requests can move straight to planning. When a missing detail changes the result, Werk asks a focused question instead of guessing.",
   },
   {
     kicker: "Revise",
@@ -56,7 +56,7 @@ const privacyCards = [
   {
     kicker: "No account",
     title: "No sign-in is required",
-    text: "WERK does not need a user account or paid storage to remember the workspace on one browser.",
+    text: "Werk does not need a user account or paid storage to remember the workspace on one browser.",
   },
   {
     kicker: "Service scope",
@@ -74,7 +74,7 @@ const faqCards = [
   {
     kicker: "FAQ",
     title: "Will the video stay on the site?",
-    text: "Yes. The embed plays inside the docs page so visitors do not need to leave WERK to watch it.",
+    text: "Yes. The embed plays inside the docs page so visitors do not need to leave Werk to watch it.",
   },
   {
     kicker: "FAQ",
@@ -96,7 +96,7 @@ export default function Docs({ onLaunch, onHome }: DocsProps) {
           <figure className="docs__video reveal" style={{ transitionDelay: "40ms" }}>
             <div className="docs__frame">
               <iframe
-                title="WERK overview video"
+                title="Werk overview video"
                 src="https://www.youtube-nocookie.com/embed/M7lc1UVf-VE?rel=0"
                 loading="lazy"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -110,10 +110,10 @@ export default function Docs({ onLaunch, onHome }: DocsProps) {
           </figure>
 
           <div className="docs__hero reveal" style={{ transitionDelay: "100ms" }}>
-            <span className="eyebrow eyebrow--center">WERK docs</span>
-            <h1 className="display docs__title">A detailed guide to WERK.</h1>
+            <span className="eyebrow eyebrow--center">Werk docs</span>
+            <h1 className="display docs__title">A detailed guide to Werk.</h1>
             <p className="lead docs__lead">
-              WERK turns one request into a reviewed package of business assets. It asks for the details that matter, shows the drafts, and lets you export the files you need.
+              Werk turns one request into a reviewed package of business assets. It asks for the details that matter, shows the drafts, and lets you export the files you need.
             </p>
             <div className="docs__actions">
               <button className="btn btn--primary btn--lg" onClick={onLaunch}>
@@ -130,10 +130,10 @@ export default function Docs({ onLaunch, onHome }: DocsProps) {
       <section className="section section--alt docs__section">
         <div className="container">
           <div className="section__head section__head--center reveal">
-            <span className="eyebrow eyebrow--center">What WERK is for</span>
+            <span className="eyebrow eyebrow--center">What Werk is for</span>
             <h2 className="display section__title">A workspace that stays focused on the request.</h2>
             <p className="lead">
-              WERK is not a chat transcript. It is a guided workspace that proposes the useful package, keeps gaps visible, and gives you control before export.
+              Werk is not a chat transcript. It is a guided workspace that proposes the useful package, keeps gaps visible, and gives you control before export.
             </p>
           </div>
           <div className="docs__grid reveal" style={{ transitionDelay: "60ms" }}>
@@ -163,7 +163,7 @@ export default function Docs({ onLaunch, onHome }: DocsProps) {
             <span className="eyebrow eyebrow--center">Review and export</span>
             <h2 className="display section__title">See the draft before it becomes the file.</h2>
             <p className="lead">
-              WERK keeps the package visible while it works. That makes it easier to confirm the shape, revise a single asset, and export the right format.
+              Werk keeps the package visible while it works. That makes it easier to confirm the shape, revise a single asset, and export the right format.
             </p>
           </div>
           <div className="docs__grid reveal" style={{ transitionDelay: "60ms" }}>
@@ -184,7 +184,7 @@ export default function Docs({ onLaunch, onHome }: DocsProps) {
             <span className="eyebrow eyebrow--center">Browser-local privacy</span>
             <h2 className="display section__title">Keep the workspace in the browser.</h2>
             <p className="lead">
-              WERK is built to stay light. The browser keeps the local workspace while the generation service is used only when you request a package.
+              Werk is built to stay light. The browser keeps the local workspace while the generation service is used only when you request a package.
             </p>
           </div>
           <div className="docs__grid reveal" style={{ transitionDelay: "60ms" }}>

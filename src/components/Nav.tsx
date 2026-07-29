@@ -47,7 +47,7 @@ export default function Nav({ view, onLaunch, onDocs, onHome }: NavProps) {
         { kind: "anchor", href: "#assets", label: "Product", desc: "What Werk makes for you" },
         { kind: "anchor", href: "#how", label: "How it works", desc: "From one request to a full package" },
         { kind: "anchor", href: "#cases", label: "Use cases", desc: "Real requests, real outputs" },
-        { kind: "action", label: "WERK docs", desc: "Read the product guide", onClick: () => { setOpen(false); onDocs?.() } },
+        { kind: "action", label: "Werk docs", desc: "Read the product guide", onClick: () => { setOpen(false); onDocs?.() } },
       ]
 
   const panelLabel = view === "docs" ? "Navigate" : "Jump to"
