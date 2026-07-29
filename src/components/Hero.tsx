@@ -14,7 +14,7 @@ export default function Hero({ onLaunch }: HeroProps) {
           <h1 className="display hero__title reveal" style={{ transitionDelay: "90ms" }}>
             One request.
             <br />
-            <em>One complete package.</em>
+            <em>One curated stack.</em>
           </h1>
           <p className="lead hero__sub reveal" style={{ transitionDelay: "140ms" }}>
             Describe the outcome in plain language. Werk suggests the useful documents,
