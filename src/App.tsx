@@ -11,18 +11,23 @@ import Docs from "./components/Docs"
 
 type View = "landing" | "docs" | "studio"
 
+function getInitialView(): View {
+  const path = window.location.pathname.replace(/\/+$/, "") || "/"
+  if (path === "/docs") return "docs"
+  try {
+    return localStorage.getItem("werk.view") === "studio" ? "studio" : "landing"
+  } catch {
+    return "landing"
+  }
+}
+
 export default function App() {
-  const [view, setView] = useState<View>(() => {
-    try {
-      const saved = localStorage.getItem("werk.view")
-      return saved === "docs" || saved === "studio" ? saved : "landing"
-    } catch {
-      return "landing"
-    }
-  })
+  const [view, setView] = useState<View>(getInitialView)
 
   useEffect(() => {
     try { localStorage.setItem("werk.view", view) } catch { /* ignore private mode */ }
+    const path = view === "docs" ? "/docs" : "/"
+    if (window.location.pathname !== path) history.replaceState(null, "", path)
   }, [view])
 
   useEffect(() => {
