@@ -68,13 +68,13 @@ const privacyCards = [
 const faqCards = [
   {
     kicker: "FAQ",
-    title: "Can I replace the video later?",
-    text: "Yes. Swap the temporary YouTube ID for the upload you want to feature and keep the same embed wrapper.",
+    title: "Can I share the docs page?",
+    text: "Yes. The docs view opens at /docs, so you can share the page directly.",
   },
   {
     kicker: "FAQ",
-    title: "Will the video stay on the site?",
-    text: "Yes. The embed plays inside the docs page so visitors do not need to leave Werk to watch it.",
+    title: "How do I open the workspace?",
+    text: "Use Open workspace from the docs page or the landing page to jump straight to /workspace.",
   },
   {
     kicker: "FAQ",
@@ -104,9 +104,7 @@ export default function Docs({ onLaunch, onHome }: DocsProps) {
                 referrerPolicy="strict-origin-when-cross-origin"
               />
             </div>
-            <figcaption className="docs__caption">
-              This is a temporary placeholder video. Replace the ID with your upload later. Playback stays inside the docs page so visitors do not have to open YouTube.
-            </figcaption>
+            <figcaption className="docs__caption">Product overview video.</figcaption>
           </figure>
 
           <div className="docs__hero reveal" style={{ transitionDelay: "100ms" }}>

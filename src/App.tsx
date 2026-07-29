@@ -11,23 +11,31 @@ import Docs from "./components/Docs"
 
 type View = "landing" | "docs" | "studio"
 
-function getInitialView(): View {
-  const path = window.location.pathname.replace(/\/+$/, "") || "/"
+function viewFromPath(pathname: string): View {
+  const path = pathname.replace(/\/+$/, "") || "/"
   if (path === "/docs") return "docs"
-  try {
-    return localStorage.getItem("werk.view") === "studio" ? "studio" : "landing"
-  } catch {
-    return "landing"
-  }
+  if (path === "/workspace") return "studio"
+  return "landing"
+}
+
+function pathFromView(view: View): string {
+  if (view === "docs") return "/docs"
+  if (view === "studio") return "/workspace"
+  return "/"
 }
 
 export default function App() {
-  const [view, setView] = useState<View>(getInitialView)
+  const [view, setView] = useState<View>(() => viewFromPath(window.location.pathname))
 
   useEffect(() => {
-    try { localStorage.setItem("werk.view", view) } catch { /* ignore private mode */ }
-    const path = view === "docs" ? "/docs" : "/"
-    if (window.location.pathname !== path) history.replaceState(null, "", path)
+    const onPopState = () => setView(viewFromPath(window.location.pathname))
+    window.addEventListener("popstate", onPopState)
+    return () => window.removeEventListener("popstate", onPopState)
+  }, [])
+
+  useEffect(() => {
+    const path = pathFromView(view)
+    if (window.location.pathname !== path) history.pushState(null, "", path)
   }, [view])
 
   useEffect(() => {
@@ -55,7 +63,10 @@ export default function App() {
 
   const goLanding = () => setView("landing")
   const goDocs = () => setView("docs")
-  const launch = () => setView("studio")
+  const launch = () => {
+    window.scrollTo(0, 0)
+    setView("studio")
+  }
 
   if (view === "studio") {
     return <Studio onBack={goLanding} />
