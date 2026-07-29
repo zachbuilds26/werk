@@ -17,6 +17,7 @@ type NavItem =
 
 export default function Nav({ view, onLaunch, onDocs, onHome }: NavProps) {
   const [open, setOpen] = useState(false)
+  const isDocs = view === "docs"
 
   const goTo = (href: string) => (e: React.MouseEvent) => {
     e.preventDefault()
@@ -38,7 +39,7 @@ export default function Nav({ view, onLaunch, onDocs, onHome }: NavProps) {
     return () => window.removeEventListener("keydown", onKey)
   }, [open])
 
-  const items: NavItem[] = view === "docs"
+  const items: NavItem[] = isDocs
     ? [
         { kind: "action", label: "Back home", desc: "Return to the landing page", onClick: () => { setOpen(false); onHome?.() } },
         { kind: "action", label: "Open workspace", desc: "Start a new package", onClick: () => { setOpen(false); onLaunch?.() } },
@@ -50,43 +51,46 @@ export default function Nav({ view, onLaunch, onDocs, onHome }: NavProps) {
         { kind: "action", label: "Werk docs", desc: "Read the product guide", onClick: () => { setOpen(false); onDocs?.() } },
       ]
 
-  const panelLabel = view === "docs" ? "Navigate" : "Jump to"
-
   return (
-    <div className="site-head">
-      <div className="topbar" role="region" aria-label="Announcement">
-        <div className="topbar__inner">
-          <a className="topbar__link" href="#start">
-            <span>Review outputs before export</span>
-            <span className="topbar__sep" aria-hidden="true" />
-            <span className="topbar__cta">
-              Open workspace <Arrow size={14} className="topbar__arrow" />
-            </span>
-          </a>
-        </div>
-      </div>
-
-      <header className={`nav${open ? " is-open" : ""}`}>
-        <div className="nav__inner">
-          {view === "docs" ? (
-            <button
-              type="button"
-              className="brand brand--button"
-              aria-label="Back to home"
-              onClick={() => { setOpen(false); onHome?.() }}
-            >
-              <Logo />
-            </button>
-          ) : (
-            <a
-              href="#top"
-              className="brand"
-              aria-label="werk home"
-              onClick={() => setOpen(false)}
-            >
-              <Logo />
+    <div className={`site-head${isDocs ? " site-head--docs" : ""}`}>
+      {!isDocs && (
+        <div className="topbar" role="region" aria-label="Announcement">
+          <div className="topbar__inner">
+            <a className="topbar__link" href="#start">
+              <span>Review outputs before export</span>
+              <span className="topbar__sep" aria-hidden="true" />
+              <span className="topbar__cta">
+                Open workspace <Arrow size={14} className="topbar__arrow" />
+              </span>
             </a>
-          )}
+          </div>
+        </div>
+      )}
+
+      <header className={`nav${open ? " is-open" : ""}${isDocs ? " nav--docs" : ""}`}>
+        <div className="nav__inner">
+          <div className="nav__brand-group">
+            {isDocs ? (
+              <button
+                type="button"
+                className="brand brand--button"
+                aria-label="Back to home"
+                onClick={() => { setOpen(false); onHome?.() }}
+              >
+                <Logo />
+              </button>
+            ) : (
+              <a
+                href="#top"
+                className="brand"
+                aria-label="werk home"
+                onClick={() => setOpen(false)}
+              >
+                <Logo />
+              </a>
+            )}
+            {isDocs && <span className="nav__docs-label">Docs</span>}
+          </div>
 
           <div className="nav__actions">
             <button className="btn btn--primary nav__cta" onClick={onLaunch}>
@@ -119,7 +123,7 @@ export default function Nav({ view, onLaunch, onDocs, onHome }: NavProps) {
             />
             <div className="nav__panel" id="werk-menu">
               <div className="nav__panel-inner">
-                <p className="nav__panel-label">{panelLabel}</p>
+                <p className="nav__panel-label">{isDocs ? "Navigate" : "Jump to"}</p>
                 <div className="nav__panel-grid">
                   {items.map((item) => (
                     item.kind === "anchor" ? (

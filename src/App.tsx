@@ -88,7 +88,7 @@ export default function App() {
           </>
         )}
       </main>
-      <Footer />
+      {view === "landing" && <Footer />}
     </>
   )
 }
