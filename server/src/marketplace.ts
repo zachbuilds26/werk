@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import express from "express";
 import { marketplaceInvocationSchema } from "./schemas.js";
 import { createContinuationToken, readContinuationToken } from "./marketplace-token.js";
+import { buildArtifactDescriptor, renderFileForDraft } from "./artifacts.js";
 import { createDraft, createPlan } from "./workflows.js";
 import type { WorkspaceContext } from "./types.js";
 
@@ -143,7 +144,9 @@ export function createMarketplaceRouter(
         brief: continuation.plan.brief,
         signal: controller.signal,
       });
-      return res.status(200).json({ requestId, result: { operation: "draft", draft } });
+      const rendered = await renderFileForDraft(draft);
+      const artifact = buildArtifactDescriptor(draft, rendered, { artifactId: crypto.randomUUID() });
+      return res.status(200).json({ requestId, result: { operation: "draft", draft, artifact } });
     } catch (error) {
       if (controller.signal.aborted) return providerError(res, requestId, 504, "TIMED_OUT", "The provider could not finish in time. Try again later.");
       return providerError(res, requestId, 503, "GENERATION_UNAVAILABLE", "The provider is temporarily unavailable. Try again later.");

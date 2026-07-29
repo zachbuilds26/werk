@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import JSZip from "jszip";
 import { hasGroqKey, groqJson } from "./groq.js";
+import { createA2ARouter } from "./a2a.js";
 import { createMarketplaceRouter, PROVIDER_PATH } from "./marketplace.js";
 import { CLARIFY_SYSTEM } from "./prompts.js";
 import { renderDraft } from "./render.js";
@@ -23,6 +24,7 @@ const DRAFT_PACE_MS = 18000;
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
+app.use(createA2ARouter());
 app.use(PROVIDER_PATH, createMarketplaceRouter());
 
 function asString(value: unknown, max: number): string {
