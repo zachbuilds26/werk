@@ -93,22 +93,8 @@ export default function Docs({ onLaunch, onHome }: DocsProps) {
     <>
       <section className="section docs__intro" id="top">
         <div className="container docs__intro-inner">
-          <figure className="docs__video reveal" style={{ transitionDelay: "40ms" }}>
-            <div className="docs__frame">
-              <iframe
-                title="Werk overview video"
-                src="https://www.youtube-nocookie.com/embed/M7lc1UVf-VE?rel=0"
-                loading="lazy"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                allowFullScreen
-                referrerPolicy="strict-origin-when-cross-origin"
-              />
-            </div>
-            <figcaption className="docs__caption">Product overview video.</figcaption>
-          </figure>
-
-          <div className="docs__hero reveal" style={{ transitionDelay: "100ms" }}>
-            <span className="eyebrow eyebrow--center">Werk docs</span>
+          <div className="docs__hero reveal" style={{ transitionDelay: "40ms" }}>
+            <span className="eyebrow">Werk docs</span>
             <h1 className="display docs__title">A detailed guide to Werk.</h1>
             <p className="lead docs__lead">
               Werk turns one request into a reviewed package of business assets. It asks for the details that matter, shows the drafts, and lets you export the files you need.
@@ -122,6 +108,20 @@ export default function Docs({ onLaunch, onHome }: DocsProps) {
               </button>
             </div>
           </div>
+
+          <figure className="docs__video reveal" style={{ transitionDelay: "100ms" }}>
+            <div className="docs__frame">
+              <iframe
+                title="Werk overview video"
+                src="https://www.youtube-nocookie.com/embed/M7lc1UVf-VE?rel=0"
+                loading="lazy"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                allowFullScreen
+                referrerPolicy="strict-origin-when-cross-origin"
+              />
+            </div>
+            <figcaption className="docs__caption">Product overview video.</figcaption>
+          </figure>
         </div>
       </section>
 

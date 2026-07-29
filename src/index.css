@@ -1027,7 +1027,7 @@ h2.display {
 .docs__intro-inner {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   gap: clamp(1.8rem, 3.6vw, 2.5rem);
   max-width: 920px;
 }
@@ -1061,15 +1061,15 @@ h2.display {
   line-height: 1.55;
   color: var(--ink-2);
   max-width: 72ch;
-  text-align: center;
+  text-align: left;
 }
 
 .docs__hero {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 18px;
-  text-align: center;
+  text-align: left;
 }
 
 .docs__title {
@@ -1078,13 +1078,13 @@ h2.display {
 
 .docs__lead {
   max-width: 56ch;
-  margin-inline: auto;
+  margin-inline: 0;
 }
 
 .docs__actions {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 12px;
 }
 
