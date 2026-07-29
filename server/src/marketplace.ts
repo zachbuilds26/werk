@@ -5,6 +5,8 @@ import { createContinuationToken, readContinuationToken } from "./marketplace-to
 import { buildArtifactDescriptor, renderFileForDraft } from "./artifacts.js";
 import { createDraft, createPlan } from "./workflows.js";
 import type { WorkspaceContext } from "./types.js";
+import type { WerkPaymentListing } from "./okx-payment.js";
+import { WERK_PAYMENT_DESCRIPTION } from "./okx-payment.js";
 
 const PROVIDER_PATH = "/a2mcp/werk";
 const DEFAULT_WORKSPACE: WorkspaceContext = {
@@ -57,9 +59,14 @@ function defaultWorkspace(context?: Partial<WorkspaceContext>): WorkspaceContext
   return { ...DEFAULT_WORKSPACE, ...context };
 }
 
+function marketplaceReady(config: MarketplaceConfig, payment?: WerkPaymentListing | null): boolean {
+  return config.enabled && config.tokenSecret.length >= 32 && (payment ? payment.ready : true);
+}
+
 export function createMarketplaceRouter(
   config = marketplaceConfig(),
   operations: MarketplaceOperations = { createPlan, createDraft },
+  payment: WerkPaymentListing | null = null,
 ): express.Router {
   const router = express.Router();
   const rateLimits = new Map<string, RateLimitEntry>();
@@ -72,21 +79,38 @@ export function createMarketplaceRouter(
   });
 
   router.get("/", (_req, res) => {
-    if (!config.enabled || config.tokenSecret.length < 32) {
+    if (!marketplaceReady(config, payment)) {
       return res.status(503).json({ error: { code: "PROVIDER_UNAVAILABLE", message: "The Werk marketplace provider is not available." } });
+    }
+    if (!payment) {
+      return res.json({
+        name: "Werk",
+        version: "1.0",
+        endpoint: PROVIDER_PATH,
+        pricing: "free",
+        operations: ["plan", "draft"],
+      });
     }
     return res.json({
       name: "Werk",
       version: "1.0",
       endpoint: PROVIDER_PATH,
-      pricing: "free",
+      description: payment.description,
+      pricing: payment.pricing,
+      payment: {
+        scheme: payment.scheme,
+        network: payment.network,
+        asset: payment.asset,
+        payTo: payment.payTo,
+        mimeType: payment.mimeType,
+      },
       operations: ["plan", "draft"],
     });
   });
 
   router.post("/", async (req, res) => {
     const requestId = crypto.randomUUID();
-    if (!config.enabled || config.tokenSecret.length < 32) {
+    if (!marketplaceReady(config, payment)) {
       return providerError(res, requestId, 503, "PROVIDER_UNAVAILABLE", "The Werk marketplace provider is not available. Try again later.");
     }
 
@@ -160,4 +184,4 @@ export function createMarketplaceRouter(
   return router;
 }
 
-export { PROVIDER_PATH };
+export { PROVIDER_PATH, WERK_PAYMENT_DESCRIPTION };

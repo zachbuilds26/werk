@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { test } from "node:test";
 import express from "express";
 import { createMarketplaceRouter } from "./marketplace.js";
+import { buildWerkPaymentListing, OKX_PAYMENT_ASSET, OKX_PAYMENT_NETWORK, WERK_PAYMENT_DESCRIPTION, WERK_PAYMENT_PRICE_LABEL } from "./okx-payment.js";
 import type { AssetDraft, PackagePlan, WorkspaceContext } from "./types.js";
 
 const secret = "marketplace-test-secret-1234567890";
@@ -106,7 +107,8 @@ test("returns a safe unavailable response until the provider is configured", asy
   });
 });
 
-test("plans work and drafts only an asset from its encrypted continuation", async () => {
+test("returns paid discovery metadata and keeps the plan/draft flow intact", async () => {
+  const payment = buildWerkPaymentListing("0xd9002c9e91516ce9ad0155a0d9d9e3092d64ac23");
   let planInput: unknown;
   let draftInput: unknown;
   await withProvider(createMarketplaceRouter(config(), operations({
@@ -118,10 +120,27 @@ test("plans work and drafts only an asset from its encrypted continuation", asyn
       draftInput = input;
       return draft;
     },
-  })), async (baseUrl) => {
+  }), payment), async (baseUrl) => {
     const discovery = await fetch(baseUrl);
     assert.equal(discovery.status, 200);
-    assert.equal((await discovery.json()).endpoint, "/a2mcp/werk");
+    const discovered = await discovery.json() as {
+      endpoint: string;
+      description: string;
+      pricing: string;
+      payment: { scheme: string; network: string; asset: string; payTo: string; mimeType: string };
+      operations: string[];
+    };
+    assert.equal(discovered.endpoint, "/a2mcp/werk");
+    assert.equal(discovered.description, WERK_PAYMENT_DESCRIPTION);
+    assert.equal(discovered.pricing, WERK_PAYMENT_PRICE_LABEL);
+    assert.deepEqual(discovered.payment, {
+      scheme: "exact",
+      network: OKX_PAYMENT_NETWORK,
+      asset: OKX_PAYMENT_ASSET,
+      payTo: payment.payTo,
+      mimeType: "application/json",
+    });
+    assert.deepEqual(discovered.operations, ["plan", "draft"]);
 
     const planResponse = await post(baseUrl, {
       operation: "plan",

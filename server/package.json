@@ -6,10 +6,13 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc && npm run copy-fonts",
     "start": "node dist/index.js",
-    "test": "tsx --test src/groq.test.ts src/workspace.test.ts src/quality.test.ts src/prompts.test.ts src/marketplace-token.test.ts src/marketplace.test.ts src/a2a.test.ts",
+    "test": "tsx --test src/groq.test.ts src/workspace.test.ts src/quality.test.ts src/prompts.test.ts src/marketplace-token.test.ts src/marketplace.test.ts src/okx-payment.test.ts src/a2a.test.ts",
     "copy-fonts": "node copy-fonts.mjs"
   },
   "dependencies": {
+    "@okxweb3/x402-core": "0.1.0",
+    "@okxweb3/x402-express": "0.1.1",
+    "@okxweb3/x402-evm": "0.2.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "exceljs": "^4.4.0",

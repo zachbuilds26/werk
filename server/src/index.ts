@@ -16,6 +16,7 @@ import {
 import { buildWorkspaceRequest } from "./workspace.js";
 import { createDraft, createPlan, withOpenInputs } from "./workflows.js";
 import type { ClarifyQuestion, ClarifyResult } from "./types.js";
+import { createWerkPaymentIntegration } from "./okx-payment.js";
 
 const PORT = Number(process.env.PORT) || 8787;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -23,8 +24,12 @@ const MAX_TOKENS_CLARIFY = 900;
 const DRAFT_PACE_MS = 18000;
 
 const app = express();
+const werkPayment = createWerkPaymentIntegration();
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "1mb" }));
 app.use(createA2ARouter());
+app.use(werkPayment.middleware);
+app.use(PROVIDER_PATH, createMarketplaceRouter(undefined, undefined, werkPayment.listing));
 app.use(PROVIDER_PATH, createMarketplaceRouter());
 
 function asString(value: unknown, max: number): string {
@@ -52,7 +57,7 @@ function coerceClarify(raw: unknown): ClarifyResult {
   return { mode: "clarify", reply: asString(obj.reply, 240), questions };
 }
 
-app.get("/api/health", (_req, res) => res.json({ ok: true, groq: hasGroqKey() }));
+app.get("/api/health", (_req, res) => res.json({ ok: true, groq: hasGroqKey(), payment: werkPayment.health }));
 
 app.post("/api/clarify", async (req, res) => {
   const parsed = requestPayloadSchema.safeParse(req.body);
