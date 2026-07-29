@@ -7,10 +7,10 @@ export default function Footer() {
         <div className="footer__bottom">
           <div className="footer__signoff">
             <Logo />
-            <span>One request, useful work outputs.</span>
+            <span>Browser-local workspace.</span>
           </div>
           <div className="footer__legal">
-            <span className="footer__link">Live on OKX.AI as an agent</span>
+            <span className="footer__link">OKX.AI marketplace listing</span>
           </div>
         </div>
       </div>

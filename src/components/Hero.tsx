@@ -14,15 +14,15 @@ export default function Hero({ onLaunch }: HeroProps) {
           <h1 className="display hero__title reveal" style={{ transitionDelay: "90ms" }}>
             One request.
             <br />
-            <em>Your work,&nbsp;organised.</em>
+            <em>One complete package.</em>
           </h1>
           <p className="lead hero__sub reveal" style={{ transitionDelay: "140ms" }}>
-            Describe the outcome you need in plain language. Werk suggests the useful documents,
-            plans, and trackers, then helps you turn them into a clear draft.
+            Describe the outcome in plain language. Werk suggests the useful documents,
+            plans, and trackers, then lets you review them before export.
           </p>
           <div className="hero__cta reveal" style={{ transitionDelay: "190ms" }}>
             <button className="btn btn--primary btn--lg" onClick={onLaunch}>
-              Start a request <Arrow size={17} className="arrow" />
+              Open workspace <Arrow size={17} className="arrow" />
             </button>
             <a className="btn btn--ghost btn--lg" href="#how">
               See how it works

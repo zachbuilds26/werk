@@ -42,10 +42,10 @@ export default function Nav({ onLaunch }: NavProps) {
       <div className="topbar" role="region" aria-label="Announcement">
         <div className="topbar__inner">
           <a className="topbar__link" href="#start">
-            <span>Free to try, no card, no account needed</span>
+            <span>Review outputs before export</span>
             <span className="topbar__sep" aria-hidden="true" />
             <span className="topbar__cta">
-              Start now <Arrow size={14} className="topbar__arrow" />
+              Open workspace <Arrow size={14} className="topbar__arrow" />
             </span>
           </a>
         </div>
@@ -64,7 +64,7 @@ export default function Nav({ onLaunch }: NavProps) {
 
           <div className="nav__actions">
             <button className="btn btn--primary nav__cta" onClick={onLaunch}>
-              Launch app <Arrow size={15} className="arrow" />
+              Open workspace <Arrow size={15} className="arrow" />
             </button>
             <button
               type="button"
@@ -112,7 +112,7 @@ export default function Nav({ onLaunch }: NavProps) {
                   className="btn btn--primary nav__panel-cta"
                   onClick={() => { setOpen(false); onLaunch?.() }}
                 >
-                  Launch app <Arrow size={15} className="arrow" />
+                  Open workspace <Arrow size={15} className="arrow" />
                 </button>
               </div>
             </div>

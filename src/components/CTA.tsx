@@ -8,15 +8,13 @@ export default function CTA({ onLaunch }: CTAProps) {
       <div className="container">
         <div className="cta__inner reveal">
           <h2 className="cta__title">
-            Stop preparing.
-            <br />
-            Start requesting.
+            Open the workspace.
           </h2>
           <p className="cta__sub">
-            Make one request, review the suggested work, and create drafts you can actually use.
+            Make one request, review the package, and export the drafts you need.
           </p>
           <button className="btn btn--primary btn--lg cta__btn" onClick={onLaunch}>
-            Start a request <Arrow size={17} className="arrow" />
+            Open workspace <Arrow size={17} className="arrow" />
           </button>
         </div>
       </div>

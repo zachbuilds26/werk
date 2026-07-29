@@ -143,6 +143,71 @@ function restoreTurn(turn: ChatTurn): ChatTurn {
   return { ...turn, drafts }
 }
 
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+type PackageSnapshot = {
+  total: number
+  completed: number
+  active: number
+  failed: number
+  warnings: number
+  versionCount: number
+  openInputs: string[]
+  knownDetails: string[]
+}
+
+function getPackageSnapshot(plan: PackagePlan | null, drafts: Record<string, DraftState>): PackageSnapshot {
+  if (!plan) {
+    return { total: 0, completed: 0, active: 0, failed: 0, warnings: 0, versionCount: 0, openInputs: [], knownDetails: [] }
+  }
+
+  const openInputs = [...new Set([
+    ...plan.brief.openInputs,
+    ...plan.assets.flatMap((asset) => drafts[asset.id]?.draft?.metadata?.gaps ?? []),
+  ])]
+  let completed = 0
+  let active = 0
+  let failed = 0
+  let warnings = 0
+  let versionCount = 0
+
+  for (const asset of plan.assets) {
+    const state = drafts[asset.id]
+    if (state?.draft) completed += 1
+    if (state?.status === "drafting" || state?.status === "verifying" || state?.status === "revising") active += 1
+    if (state?.error) failed += 1
+    if (state?.warning) warnings += 1
+    versionCount += state?.versions?.length ?? (state?.draft ? 1 : 0)
+  }
+
+  return { total: plan.assets.length, completed, active, failed, warnings, versionCount, openInputs, knownDetails: plan.brief.knownDetails }
+}
+
+function getPackageStatusLabel(phase: Phase, snapshot: PackageSnapshot): string {
+  if (phase === "error") return "Request failed"
+  if (phase === "clarifying") return snapshot.openInputs.length ? `Clarifying · ${snapshot.openInputs.length} open inputs` : "Clarifying"
+  if (phase === "planning") return "Reviewing suggested outputs"
+  if (phase === "ready") return `Ready · ${snapshot.completed} of ${snapshot.total}`
+  if (phase === "streaming") return snapshot.active > 0 ? `Drafting · ${snapshot.completed} of ${snapshot.total}` : "Drafting package"
+  if (!snapshot.total) return "Waiting for request"
+  if (snapshot.failed > 0 && snapshot.completed + snapshot.failed >= snapshot.total) return `Needs retry · ${snapshot.failed} failed`
+  return `${snapshot.completed} of ${snapshot.total} complete`
+}
+
+function getPackageStatusTone(phase: Phase, snapshot: PackageSnapshot): "idle" | "review" | "busy" | "ready" | "danger" {
+  if (phase === "error" || (snapshot.failed > 0 && snapshot.completed + snapshot.failed >= snapshot.total)) return "danger"
+  if (phase === "ready" && snapshot.completed >= snapshot.total && snapshot.failed === 0) return "ready"
+  if (phase === "planning" || phase === "clarifying") return "review"
+  if (phase === "streaming" || snapshot.active > 0) return "busy"
+  return "idle"
+}
+
+function getFocusableElements(root: HTMLElement | null): HTMLElement[] {
+  if (!root) return []
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((el) => !el.hasAttribute("disabled") && el.tabIndex !== -1)
+}
+
 export default function Studio({ onBack }: StudioProps) {
   const initialWorkspace = readWorkspaceContext()
   const [workspace, setWorkspace] = useState<WorkspaceContext | null>(initialWorkspace)
@@ -165,8 +230,12 @@ export default function Studio({ onBack }: StudioProps) {
   const [clarifyError, setClarifyError] = useState("")
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null)
   const [downloadingPkg, setDownloadingPkg] = useState(false)
+  const [downloadPkgError, setDownloadPkgError] = useState("")
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const threadRef = useRef<HTMLDivElement>(null)
+  const drawerReturnFocusRef = useRef<HTMLElement | null>(null)
+  const firstUseReturnFocusRef = useRef<HTMLElement | null>(null)
   // the request actually sent to generation (raw, or enriched with clarify
   // answers). Kept in a ref so a single-asset regenerate reuses the same
   // context instead of rerunning the whole package.
@@ -175,10 +244,20 @@ export default function Studio({ onBack }: StudioProps) {
   useEffect(() => () => abortRef.current?.abort(), [])
 
   useEffect(() => {
-    if (!firstUseGuideSeen && workspace && !workspaceMode && phase === "empty") {
+    if (!firstUseGuideSeen && workspace && !workspaceMode && phase === "empty" && !showFirstUseGuide) {
+      firstUseReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
       setShowFirstUseGuide(true)
+      setMobileMenuOpen(false)
     }
-  }, [firstUseGuideSeen, workspace, workspaceMode, phase])
+  }, [firstUseGuideSeen, workspace, workspaceMode, phase, showFirstUseGuide])
+
+  useEffect(() => {
+    if (workspaceMode) setMobileMenuOpen(false)
+  }, [workspaceMode])
+
+  useEffect(() => {
+    if (openId) setMobileMenuOpen(false)
+  }, [openId])
 
   useEffect(() => {
     if (!showFirstUseGuide) return
@@ -258,7 +337,10 @@ export default function Studio({ onBack }: StudioProps) {
     if (el) el.scrollTop = el.scrollHeight
   }, [history, request, plan, drafts, phase, clarify, clarifyAnswers])
 
+  const closeMobileMenu = () => setMobileMenuOpen(false)
+
   const openWorkspaceEditor = (mode: WorkspaceMode) => {
+    closeMobileMenu()
     setWorkspaceDraft(mode === "edit" && workspace ? workspaceToDraft(workspace) : EMPTY_WORKSPACE_DRAFT)
     setWorkspaceMode(mode)
   }
@@ -280,11 +362,24 @@ export default function Studio({ onBack }: StudioProps) {
     setShowFirstUseGuide(false)
     setFirstUseGuideSeen(true)
     markFirstUseGuideSeen()
+    firstUseReturnFocusRef.current?.focus()
+  }
+
+  const openDrawer = (id: string) => {
+    drawerReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    closeMobileMenu()
+    setOpenId(id)
+  }
+
+  const startNewRequest = () => {
+    closeMobileMenu()
+    reset()
   }
 
   const start = (text: string) => {
     const value = text.trim()
     if (!value || !workspace) { if (!workspace) openWorkspaceEditor("setup"); return }
+    closeMobileMenu()
     const currentTurn: ChatTurn | null = request
       ? { request, plan, drafts, clarify, clarifyAnswers, openInputs, workspaceSnapshot: workspace, errorMsg }
       : null
@@ -296,7 +391,7 @@ export default function Studio({ onBack }: StudioProps) {
     abortRef.current?.abort(); const ctrl = new AbortController(); abortRef.current = ctrl
     genRequestRef.current = contextualRequest
     if (currentTurn) setHistory((turns) => [...turns, currentTurn])
-    setRequest(value); setPlan(null); setDrafts({}); setOpenId(null); setErrorMsg(""); setClarify(null); setClarifyAnswers({}); setOpenInputs([]); setClarifyError(""); setPhase("streaming")
+    setRequest(value); setPlan(null); setDrafts({}); setOpenId(null); setErrorMsg(""); setDownloadPkgError(""); setClarify(null); setClarifyAnswers({}); setOpenInputs([]); setClarifyError(""); setPhase("streaming")
     clarifyRequest(contextualRequest, workspace, [], ctrl.signal).then((res) => {
       if (res.mode === "clarify" && res.questions.length) { setClarify(res); setPhase("clarifying") }
       else runPlan(contextualRequest, workspace, [])
@@ -305,7 +400,7 @@ export default function Studio({ onBack }: StudioProps) {
 
   const runPlan = (req: string, workspaceContext: WorkspaceContext, inputs: string[]) => {
     abortRef.current?.abort(); const ctrl = new AbortController(); abortRef.current = ctrl
-    genRequestRef.current = req; setPhase("streaming")
+    genRequestRef.current = req; setPhase("streaming"); setDownloadPkgError("")
     planPackage(req, workspaceContext, inputs, ctrl.signal).then((nextPlan) => {
       const combinedInputs = [...new Set([...inputs, ...nextPlan.brief.openInputs])]
       setOpenInputs(combinedInputs); setPlan({ ...nextPlan, brief: { ...nextPlan.brief, openInputs: combinedInputs } }); setPhase("planning")
@@ -314,6 +409,7 @@ export default function Studio({ onBack }: StudioProps) {
 
   const approvePlan = () => {
     if (!plan || !workspace) return
+    closeMobileMenu()
     abortRef.current?.abort(); const ctrl = new AbortController(); abortRef.current = ctrl
     setPhase("streaming")
     streamGenerate(genRequestRef.current, workspace, plan, openInputs, (e: GenerateEvent) => {
@@ -342,6 +438,7 @@ export default function Studio({ onBack }: StudioProps) {
 
   const reset = () => {
     abortRef.current?.abort()
+    closeMobileMenu()
     setPhase("empty")
     setHistory([])
     setRequest("")
@@ -349,6 +446,7 @@ export default function Studio({ onBack }: StudioProps) {
     setDrafts({})
     setOpenId(null)
     setErrorMsg("")
+    setDownloadPkgError("")
     setClarify(null)
     setClarifyAnswers({})
     setOpenInputs([])
@@ -388,21 +486,30 @@ export default function Studio({ onBack }: StudioProps) {
 
   // the finished assets, paired with their native download format — what the
   // "Download package" zip contains.
+  const snapshot = getPackageSnapshot(plan, drafts)
   const doneItems = plan?.assets
     .filter((a) => drafts[a.id]?.draft)
     .map((a) => ({ draft: drafts[a.id]!.draft!, format: KIND_META[a.kind].format })) ?? []
-  const canDownloadPkg = !!plan && phase === "ready" && doneItems.length === plan.assets.length
+  const canDownloadPkg = !!plan && phase === "ready" && snapshot.completed === snapshot.total && snapshot.failed === 0
 
   const downloadPkg = async () => {
     if (!plan || doneItems.length === 0 || downloadingPkg) return
+    closeMobileMenu()
+    setDownloadPkgError("")
     setDownloadingPkg(true)
-    try { await downloadPackage(plan.packageName, doneItems) }
-    catch { /* ignore — the user can retry */ } finally { setDownloadingPkg(false) }
+    try {
+      await downloadPackage(plan.packageName, doneItems)
+    } catch (error) {
+      setDownloadPkgError(error instanceof Error ? error.message : "Package download failed")
+    } finally {
+      setDownloadingPkg(false)
+    }
   }
 
-  const openAsset = openId ? plan?.assets.find((a) => a.id === openId) ?? null : null
+  const activeAsset = openId ? plan?.assets.find((a) => a.id === openId) ?? null : null
+  const packageStatusLabel = getPackageStatusLabel(phase, snapshot)
+  const packageStatusTone = getPackageStatusTone(phase, snapshot)
   const pkgTitle = plan?.packageTitle ?? "New request"
-  const assetCount = plan?.assets.length ?? 0
 
   return (
     <div className="cx-shell">
@@ -415,10 +522,43 @@ export default function Studio({ onBack }: StudioProps) {
             <span className="cx__bar-sep">—</span>
             <span className="cx__bar-name">{pkgTitle}</span>
           </span>
-          {assetCount > 0 && (
-            <span className="cx__pill"><span className="cx__pill-dot" /> {assetCount} outputs</span>
+          {phase !== "empty" && (
+            <span className={`cx__pill cx__pill--${packageStatusTone}`}>
+              <span className="cx__pill-dot" /> {packageStatusLabel}
+            </span>
           )}
         </div>
+
+        {(workspaceMode || workspace || phase !== "empty") && (
+          <div className="cx__mobile-toolbar">
+            <button
+              className="cx__mobile-toggle"
+              aria-expanded={mobileMenuOpen}
+              aria-controls="cx-mobile-menu"
+              onClick={() => setMobileMenuOpen((open) => !open)}
+            >
+              Actions
+              <Arrow size={13} className="arrow" />
+            </button>
+            {mobileMenuOpen && (
+              <>
+                <button className="cx__mobile-scrim" aria-label="Close actions" onClick={() => setMobileMenuOpen(false)} />
+                <div className="cx__mobile-menu" id="cx-mobile-menu">
+                  <button className="cx__mobile-item" onClick={() => openWorkspaceEditor(workspace ? "edit" : "setup")}>Edit workspace</button>
+                  {canDownloadPkg && (
+                    <button className="cx__mobile-item" onClick={downloadPkg} disabled={downloadingPkg}>
+                      {downloadingPkg ? "Zipping…" : "Download package"}
+                    </button>
+                  )}
+                  {phase !== "empty" && (
+                    <button className="cx__mobile-item" onClick={startNewRequest}>New request</button>
+                  )}
+                  <button className="cx__mobile-item" onClick={onBack}>Exit</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         <div className="cx__body">
           {/* sidebar — the package Werk assembled (hidden on narrow viewports) */}
@@ -482,7 +622,12 @@ export default function Studio({ onBack }: StudioProps) {
                 workspaceName={workspace?.organizationName}
               />
             ) : phase === "empty" ? (
-              <Empty onStart={start} showFirstUseGuide={showFirstUseGuide} onDismissFirstUseGuide={dismissFirstUseGuide} />
+              <Empty
+                onStart={start}
+                showFirstUseGuide={showFirstUseGuide}
+                onDismissFirstUseGuide={dismissFirstUseGuide}
+                restoreFocusRef={firstUseReturnFocusRef}
+              />
             ) : phase === "planning" && plan ? (
               <PackageReview plan={plan} onChange={setPlan} onCreate={approvePlan} />
             ) : (
@@ -500,23 +645,26 @@ export default function Studio({ onBack }: StudioProps) {
                 clarifyError={clarifyError}
                 onAnswerChange={onAnswerChange}
                 onSubmitClarify={submitClarify}
-                onOpen={setOpenId}
+                onOpen={openDrawer}
                 onSend={start}
                 onDownloadPkg={downloadPkg}
                 downloadingPkg={downloadingPkg}
                 canDownloadPkg={canDownloadPkg}
+                downloadPkgError={downloadPkgError}
                 onEditWorkspace={() => openWorkspaceEditor("edit")}
+                onNewRequest={startNewRequest}
               />
             )}
           </main>
         </div>
 
         <Drawer
-          asset={openAsset}
-          state={openAsset ? drafts[openAsset.id] : undefined}
-          regenerating={!!openAsset && regeneratingId === openAsset.id}
+          asset={activeAsset}
+          state={activeAsset ? drafts[activeAsset.id] : undefined}
+          regenerating={!!activeAsset && regeneratingId === activeAsset.id}
           onRegenerate={regenerate}
           onClose={() => setOpenId(null)}
+          restoreFocusRef={drawerReturnFocusRef}
         />
       </div>
     </div>
@@ -548,7 +696,7 @@ function SideItem({
 }
 
 /* ---- empty state: centered greeting + composer ---- */
-function Empty({ onStart, showFirstUseGuide, onDismissFirstUseGuide }: { onStart: (text: string) => void; showFirstUseGuide: boolean; onDismissFirstUseGuide: () => void }) {
+function Empty({ onStart, showFirstUseGuide, onDismissFirstUseGuide, restoreFocusRef }: { onStart: (text: string) => void; showFirstUseGuide: boolean; onDismissFirstUseGuide: () => void; restoreFocusRef: { current: HTMLElement | null } }) {
   return (
     <div className="cx__empty">
       <div className="cx__empty-inner">
@@ -556,7 +704,7 @@ function Empty({ onStart, showFirstUseGuide, onDismissFirstUseGuide }: { onStart
         <p className="cx__greeting-sub">
           Describe the outcome in plain language. Werk suggests the useful documents and plans, then lets you review them before it writes.
         </p>
-        {showFirstUseGuide && <FirstUseGuide onDismiss={onDismissFirstUseGuide} />}
+        {showFirstUseGuide && <FirstUseGuide onDismiss={onDismissFirstUseGuide} restoreFocusRef={restoreFocusRef} />}
         <Composer onSend={onStart} large autoFocus />
         <div className="cx__examples">
           {EXAMPLES.map((ex) => (
@@ -568,21 +716,67 @@ function Empty({ onStart, showFirstUseGuide, onDismissFirstUseGuide }: { onStart
   )
 }
 
-function FirstUseGuide({ onDismiss }: { onDismiss: () => void }) {
+function FirstUseGuide({ onDismiss, restoreFocusRef }: { onDismiss: () => void; restoreFocusRef: { current: HTMLElement | null } }) {
+  const guideRef = useRef<HTMLElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    const root = guideRef.current
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+    queueMicrotask(() => closeRef.current?.focus())
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault()
+        onDismiss()
+        return
+      }
+      if (event.key !== "Tab") return
+      const focusable = getFocusableElements(root)
+      if (!focusable.length) {
+        event.preventDefault()
+        closeRef.current?.focus()
+        return
+      }
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => {
+      window.removeEventListener("keydown", onKeyDown)
+      document.body.style.overflow = previousOverflow
+      restoreFocusRef.current?.focus()
+    }
+  }, [onDismiss, restoreFocusRef])
+
   return (
     <div className="cx__first-use-layer">
-      <aside className="cx__first-use-guide" aria-label="How Werk works">
-        <button className="cx__first-use-close" onClick={onDismiss} aria-label="Dismiss guide">×</button>
+      <aside
+        ref={guideRef}
+        className="cx__first-use-guide"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cx-first-use-title"
+        aria-describedby="cx-first-use-desc"
+      >
+        <button ref={closeRef} className="cx__first-use-close" onClick={onDismiss} aria-label="Dismiss guide">×</button>
         <div className="cx__first-use-head">
           <span className="cx__first-use-kicker">New here?</span>
-          <h2>How Werk works</h2>
+          <h2 id="cx-first-use-title">How Werk works</h2>
         </div>
+        <p id="cx-first-use-desc" className="cx__first-use-note">Keep the important details visible, review the package, then export the drafts you need.</p>
         <ol className="cx__first-use-steps">
           <li><b>Describe the outcome.</b><span>Tell Werk what you are trying to do.</span></li>
           <li><b>Keep the important details honest.</b><span>Answer the useful questions, or leave an input visibly open.</span></li>
           <li><b>Review, then create.</b><span>Choose the suggested outputs before Werk drafts them.</span></li>
         </ol>
-        <p className="cx__first-use-note">Your saved details stay in this browser.</p>
         <div className="cx__first-use-actions">
           <button className="btn btn--ghost" onClick={onDismiss}>Skip</button>
           <button className="btn btn--primary" onClick={onDismiss}>Got it <Arrow size={15} className="arrow" /></button>
@@ -608,12 +802,14 @@ function PackageReview({ plan, onChange, onCreate }: { plan: PackagePlan; onChan
     }
     onChange({ ...plan, assets: availableAssets.filter((item) => nextIds.has(item.id)) })
   }
+  const snapshot = getPackageSnapshot(plan, {} as Record<string, DraftState>)
   return (
     <div className="cx__setup-screen cx__review-screen">
       <div className="cx__setup-card cx__review-card">
         <p className="cx__setup-kicker">Suggested outputs</p>
         <h1 className="cx__setup-title">Review before Werk writes</h1>
         <p className="cx__setup-copy">Werk will use only the details shown below. Anything else stays marked as needing your input.</p>
+        <PackageTrustPanel plan={plan} snapshot={snapshot} phase="planning" compact />
         <div className="cx__setup-grid">
           <WorkspaceField label="What you need to achieve" value={plan.brief.objective} onChange={(value) => updateBrief("objective", value)} placeholder="The outcome you need" required wide />
           <WorkspaceField label="Who this is for" value={plan.brief.audience} onChange={(value) => updateBrief("audience", value)} placeholder="Needs your input: audience" wide />
@@ -631,11 +827,58 @@ function PackageReview({ plan, onChange, onCreate }: { plan: PackagePlan; onChan
   )
 }
 
+function PackageTrustPanel({ plan, snapshot, phase, compact = false }: { plan: PackagePlan; snapshot: PackageSnapshot; phase: Phase; compact?: boolean }) {
+  const status = getPackageStatusLabel(phase, snapshot)
+  const tone = getPackageStatusTone(phase, snapshot)
+  const detail = snapshot.failed > 0
+    ? `${snapshot.failed} draft${snapshot.failed === 1 ? "" : "s"} need retry.`
+    : snapshot.active > 0
+      ? "Drafts are still building."
+      : phase === "planning"
+        ? "Review the suggested outputs before writing."
+        : "The package is ready to inspect and export."
+
+  return (
+    <section className={`cx__trust${compact ? " cx__trust--compact" : ""}`}>
+      <div className="cx__trust-head">
+        <div>
+          <p className="cx__trust-kicker">Package trust</p>
+          <h2 className="cx__trust-title">{plan.packageTitle}</h2>
+        </div>
+        <span className={`cx__pill cx__pill--${tone}`}>{status}</span>
+      </div>
+      <p className="cx__trust-copy">{detail}</p>
+      <div className="cx__trust-grid">
+        <div><span>Confirmed</span><strong>{snapshot.knownDetails.length}</strong></div>
+        <div><span>Open inputs</span><strong>{snapshot.openInputs.length}</strong></div>
+        <div><span>Warnings</span><strong>{snapshot.warnings}</strong></div>
+        <div><span>Versions</span><strong>{snapshot.versionCount}</strong></div>
+      </div>
+      {!compact && (
+        <div className="cx__trust-lists">
+          {snapshot.knownDetails.length > 0 && (
+            <div className="cx__trust-list">
+              <strong>Details supplied</strong>
+              {snapshot.knownDetails.slice(0, 3).map((detail) => <span key={detail}>{detail}</span>)}
+            </div>
+          )}
+          {snapshot.openInputs.length > 0 && (
+            <div className="cx__trust-list cx__trust-list--open">
+              <strong>Still open</strong>
+              {snapshot.openInputs.slice(0, 3).map((detail) => <span key={detail}>{detail}</span>)}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
 /* ---- the conversation thread (chat pane) ---- */
 function Thread({
   threadRef, workspace, history, request, plan, drafts, phase, errorMsg,
   clarify, clarifyAnswers, clarifyError, onAnswerChange, onSubmitClarify, onOpen, onSend,
-  onDownloadPkg, downloadingPkg, canDownloadPkg, onEditWorkspace,
+  onDownloadPkg, downloadingPkg, canDownloadPkg, downloadPkgError, onEditWorkspace, onNewRequest,
 }: {
   threadRef: React.RefObject<HTMLDivElement>
   workspace: WorkspaceContext | null
@@ -655,7 +898,9 @@ function Thread({
   onDownloadPkg: () => void
   downloadingPkg: boolean
   canDownloadPkg: boolean
+  downloadPkgError: string
   onEditWorkspace: () => void
+  onNewRequest: () => void
 }) {
   const doneCount = Object.values(drafts).filter((d) => d.done).length
   const total = plan?.assets.length ?? 0
@@ -671,6 +916,7 @@ function Thread({
     : activeAsset
       ? `${progressVerb} ${activeIndex} of ${total} — ${activeAsset.title}`
       : `Finishing ${doneCount} of ${total} outputs`
+  const snapshot = getPackageSnapshot(plan, drafts)
 
   return (
     <>
@@ -703,6 +949,7 @@ function Thread({
                   {/* While assets stream, keep the progress bubble as the live
                       status — the plan's static reply only appears once done. */}
                   {phase !== "streaming" && <p className="cx__reply">{plan.reply}</p>}
+                  <PackageTrustPanel plan={plan} snapshot={snapshot} phase={phase} />
                   {phase === "ready" && plan.assets.length > 0 && (
                     <div className="cx__chip-wrap">
                       <button className="cx__chip" onClick={() => onOpen(plan.assets[0].id)}>
@@ -743,7 +990,7 @@ function Thread({
               )}
 
               {phase === "error" && (
-                <p className="cx__reply cx__reply--error">{errorMsg || "Something went wrong."}</p>
+                <p className="cx__reply cx__reply--error" role="alert">{errorMsg || "Something went wrong."}</p>
               )}
             </div>
           </div>
@@ -764,7 +1011,7 @@ function Thread({
                   />
                 </label>
               ))}
-              {clarifyError && <p className="cx__quality-note">{clarifyError}</p>}
+              {clarifyError && <p className="cx__quality-note" role="alert">{clarifyError}</p>}
               <div className="cx__clarify-foot">
                 <button className="btn btn--primary" onClick={() => onSubmitClarify()}>
                   Review suggestions <Arrow size={15} className="arrow" />
@@ -780,11 +1027,29 @@ function Thread({
 
       <div className="cx__composer-dock">
         <div className="cx__composer-wrap">
-          <Composer
-            onSend={onSend}
-            placeholder="Make another request…"
-            disabled={phase === "streaming" || phase === "clarifying"}
-          />
+          {(phase === "ready" || phase === "error") ? (
+            <div className="cx__terminal-actions">
+              {downloadPkgError && (
+                <div className="cx__inline-alert" role="alert">
+                  <p>{downloadPkgError}</p>
+                  {canDownloadPkg && (
+                    <button className="btn btn--ghost" onClick={onDownloadPkg} disabled={downloadingPkg}>
+                      {downloadingPkg ? "Retrying…" : "Try again"}
+                    </button>
+                  )}
+                </div>
+              )}
+              <button className="cx__new-request" onClick={onNewRequest}>
+                Start a new request <Arrow size={15} className="arrow" />
+              </button>
+            </div>
+          ) : (
+            <Composer
+              onSend={onSend}
+              placeholder="Make another request…"
+              disabled={phase === "streaming" || phase === "clarifying"}
+            />
+          )}
         </div>
       </div>
     </>
@@ -1046,18 +1311,22 @@ function Composer({
 
 /* ---- slide-in preview drawer ---- */
 function Drawer({
-  asset, state, regenerating, onRegenerate, onClose,
+  asset, state, regenerating, onRegenerate, onClose, restoreFocusRef,
 }: {
   asset: PlanAsset | null
   state?: DraftState
   regenerating: boolean
   onRegenerate: (id: string, instruction?: string) => void
   onClose: () => void
+  restoreFocusRef: { current: HTMLElement | null }
 }) {
   const [downloading, setDownloading] = useState(false)
+  const [downloadError, setDownloadError] = useState("")
   const versions = state?.versions ?? (state?.draft ? [state.draft] : [])
   const [selectedVersion, setSelectedVersion] = useState(0)
   const [revisionInstruction, setRevisionInstruction] = useState("")
+  const drawerRef = useRef<HTMLElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     setSelectedVersion(Math.max(0, versions.length - 1))
@@ -1065,32 +1334,85 @@ function Drawer({
 
   useEffect(() => {
     if (!asset) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose() }
+    const root = drawerRef.current
+    const previousOverflow = document.body.style.overflow
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    document.body.style.overflow = "hidden"
+    queueMicrotask(() => closeRef.current?.focus())
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault()
+        onClose()
+        return
+      }
+      if (event.key !== "Tab") return
+      const focusable = getFocusableElements(root)
+      if (!focusable.length) {
+        event.preventDefault()
+        closeRef.current?.focus()
+        return
+      }
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
     window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [asset, onClose])
+    return () => {
+      window.removeEventListener("keydown", onKey)
+      document.body.style.overflow = previousOverflow
+      previousFocus?.focus()
+      restoreFocusRef.current?.focus()
+      setDownloadError("")
+    }
+  }, [asset, onClose, restoreFocusRef])
 
   const draft = versions[selectedVersion] ?? state?.draft
-  const errored = !!state?.error && !draft
+  const hasError = !!state?.error
   const meta = asset ? KIND_META[asset.kind] : null
 
   const download = async (fmt: RenderFormat) => {
     if (!draft) return
     setDownloading(true)
-    try { await downloadAsset(draft, fmt) } catch { /* ignore */ } finally { setDownloading(false) }
+    setDownloadError("")
+    try {
+      await downloadAsset(draft, fmt)
+    } catch (error) {
+      setDownloadError(error instanceof Error ? error.message : "Download failed")
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  const retryRevision = () => {
+    if (!asset) return
+    onRegenerate(asset.id, revisionInstruction || undefined)
   }
 
   return (
     <>
       <div className={`cx__scrim${asset ? " is-open" : ""}`} onClick={onClose} />
-      <aside className={`cx__drawer${asset ? " is-open" : ""}`} aria-hidden={!asset}>
+      <aside
+        ref={drawerRef}
+        className={`cx__drawer${asset ? " is-open" : ""}`}
+        role={asset ? "dialog" : undefined}
+        aria-modal={asset ? "true" : undefined}
+        aria-labelledby={asset ? `cx-drawer-title-${asset.id}` : undefined}
+        aria-describedby={asset ? `cx-drawer-desc-${asset.id}` : undefined}
+        aria-hidden={!asset}
+      >
         {asset && meta && (
           <>
             <header className="cx__drawer-head">
               <span className="cx__drawer-icon"><AssetIcon kind={asset.kind} size={18} /></span>
               <div className="cx__drawer-titles">
-                <h2 className="cx__drawer-name">{draft?.title ?? asset.title}</h2>
-                <p className="cx__drawer-blurb">{draft?.blurb ?? asset.summary}</p>
+                <h2 className="cx__drawer-name" id={`cx-drawer-title-${asset.id}`}>{draft?.title ?? asset.title}</h2>
+                <p className="cx__drawer-blurb" id={`cx-drawer-desc-${asset.id}`}>{draft?.blurb ?? asset.summary}</p>
                 {versions.length > 0 && (
                   <label className="cx__drawer-version">
                     <span>Version</span>
@@ -1104,26 +1426,28 @@ function Drawer({
                   </label>
                 )}
               </div>
-              <button className="cx__drawer-close" onClick={onClose} aria-label="Close">
+              <button ref={closeRef} className="cx__drawer-close" onClick={onClose} aria-label="Close">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
               </button>
             </header>
             <div className="cx__drawer-body">
-              {draft ? (
-                <>
-                  {state?.warning && <p className="cx__quality-note">Quality note: {state.warning}</p>}
-                  {(draft.metadata?.gaps.length ?? 0) > 0 && <div className="cx__review-list cx__review-list--open"><strong>Details to confirm</strong>{draft.metadata!.gaps.map((gap) => <span key={gap}>{gap}</span>)}</div>}
-                  <DraftBody draft={draft} />
-                </>
-              ) : errored ? (
-                <div className="cx__drawer-error">
-                  <p className="cx__drawer-error-title">This asset didn’t build.</p>
+              {hasError && (
+                <div className="cx__drawer-error" role="alert">
+                  <p className="cx__drawer-error-title">
+                    {draft ? "A revision needs retry." : "This asset didn’t build."}
+                  </p>
                   <p className="cx__drawer-error-msg">{state?.error}</p>
-                  <p className="cx__drawer-error-hint">Regenerate to try again.</p>
+                  <div className="cx__drawer-error-actions">
+                    <button className="btn btn--ghost" onClick={retryRevision} disabled={regenerating}>
+                      {regenerating ? "Retrying…" : "Try again"}
+                    </button>
+                  </div>
                 </div>
-              ) : (
-                <p className="cx__drawer-empty">No content.</p>
               )}
+              {state?.warning && <p className="cx__quality-note" role="status">Quality note: {state.warning}</p>}
+              {(draft?.metadata?.gaps.length ?? 0) > 0 && <div className="cx__review-list cx__review-list--open"><strong>Details to confirm</strong>{draft!.metadata!.gaps.map((gap) => <span key={gap}>{gap}</span>)}</div>}
+              {draft ? <DraftBody draft={draft} /> : !hasError ? <p className="cx__drawer-empty">No content.</p> : null}
+              {downloadError && <p className="cx__quality-note" role="alert">{downloadError}</p>}
             </div>
             <footer className="cx__drawer-foot">
               <div className="cx__drawer-revise">
@@ -1131,14 +1455,16 @@ function Drawer({
                 <button
                   className="btn btn--ghost cx__drawer-regen"
                   disabled={regenerating}
-                  onClick={() => onRegenerate(asset.id, revisionInstruction || undefined)}
+                  onClick={retryRevision}
                   title="Create a revised version using this instruction"
                 >
                   <Redo size={15} /> {regenerating ? "Revising…" : "Revise"}
                 </button>
               </div>
               <div className="cx__drawer-foot-right">
-                <button className="btn btn--ghost" disabled={!draft} onClick={() => download("md")}>Markdown</button>
+                <button className="btn btn--ghost" disabled={!draft || downloading} onClick={() => download("md")}>
+                  {downloading ? "Downloading…" : "Markdown"}
+                </button>
                 <button className="btn btn--primary" disabled={!draft || downloading} onClick={() => download(meta.format)}>
                   {downloading ? "Downloading…" : `Download ${meta.formatLabel}`} <Arrow size={15} className="arrow" />
                 </button>

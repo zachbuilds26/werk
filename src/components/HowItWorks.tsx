@@ -13,8 +13,8 @@ const steps = [
   },
   {
     num: "03",
-    title: "Deliver",
-    body: "Review each draft, request changes, and download the finished files. Your work stays on this browser.",
+    title: "Export",
+    body: "Review each draft, request changes, and export the finished files. Your work stays on this browser.",
     chip: "Clear drafts",
   },
 ]
@@ -25,7 +25,7 @@ export default function HowItWorks() {
       <div className="container">
         <div className="section__head section__head--center reveal">
           <span className="eyebrow eyebrow--center">How it works</span>
-          <h2 className="display section__title">Three steps. Zero busywork.</h2>
+          <h2 className="display section__title">Three steps. One workflow.</h2>
           <p className="lead">
             Werk runs like software, not a chat. Make a request and it returns a finished package.
           </p>

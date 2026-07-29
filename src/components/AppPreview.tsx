@@ -36,7 +36,7 @@ export default function AppPreview() {
   }, [])
 
   return (
-    <div ref={ref} className={`apv${playing ? " is-playing" : ""}`} aria-label="Animated Werk product preview">
+    <div ref={ref} className={`apv${playing ? " is-playing" : ""}`} aria-hidden="true">
       <div className="apv__ambient apv__ambient--one" />
       <div className="apv__ambient apv__ambient--two" />
       <div className="apv__window">
