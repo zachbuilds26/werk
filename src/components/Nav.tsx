@@ -2,20 +2,22 @@ import { useEffect, useState } from "react"
 import { Arrow } from "./icons"
 import Logo from "./Logo"
 
-interface NavProps { onLaunch?: () => void }
+type NavView = "landing" | "docs"
 
-const links = [
-  { href: "#assets", label: "Product", desc: "What Werk makes for you" },
-  { href: "#how", label: "How it works", desc: "From one request to a full package" },
-  { href: "#cases", label: "Use cases", desc: "Real requests, real outputs" },
-]
+interface NavProps {
+  view: NavView
+  onLaunch?: () => void
+  onDocs?: () => void
+  onHome?: () => void
+}
 
-export default function Nav({ onLaunch }: NavProps) {
+type NavItem =
+  | { kind: "anchor"; href: string; label: string; desc: string }
+  | { kind: "action"; label: string; desc: string; onClick: () => void }
+
+export default function Nav({ view, onLaunch, onDocs, onHome }: NavProps) {
   const [open, setOpen] = useState(false)
 
-  // Navigate to an in-page section: close the menu, then smooth-scroll to the
-  // target. Done explicitly because closing the menu unmounts the clicked
-  // anchor, which can cancel the browser's default hash navigation.
   const goTo = (href: string) => (e: React.MouseEvent) => {
     e.preventDefault()
     setOpen(false)
@@ -27,7 +29,6 @@ export default function Nav({ onLaunch }: NavProps) {
     }
   }
 
-  // close the menu with Escape
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
@@ -36,6 +37,20 @@ export default function Nav({ onLaunch }: NavProps) {
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [open])
+
+  const items: NavItem[] = view === "docs"
+    ? [
+        { kind: "action", label: "Back home", desc: "Return to the landing page", onClick: () => { setOpen(false); onHome?.() } },
+        { kind: "action", label: "Open workspace", desc: "Start a new package", onClick: () => { setOpen(false); onLaunch?.() } },
+      ]
+    : [
+        { kind: "anchor", href: "#assets", label: "Product", desc: "What Werk makes for you" },
+        { kind: "anchor", href: "#how", label: "How it works", desc: "From one request to a full package" },
+        { kind: "anchor", href: "#cases", label: "Use cases", desc: "Real requests, real outputs" },
+        { kind: "action", label: "WERK docs", desc: "Read the product guide", onClick: () => { setOpen(false); onDocs?.() } },
+      ]
+
+  const panelLabel = view === "docs" ? "Navigate" : "Jump to"
 
   return (
     <div className="site-head">
@@ -53,14 +68,25 @@ export default function Nav({ onLaunch }: NavProps) {
 
       <header className={`nav${open ? " is-open" : ""}`}>
         <div className="nav__inner">
-          <a
-            href="#top"
-            className="brand"
-            aria-label="werk home"
-            onClick={() => setOpen(false)}
-          >
-            <Logo />
-          </a>
+          {view === "docs" ? (
+            <button
+              type="button"
+              className="brand brand--button"
+              aria-label="Back to home"
+              onClick={() => { setOpen(false); onHome?.() }}
+            >
+              <Logo />
+            </button>
+          ) : (
+            <a
+              href="#top"
+              className="brand"
+              aria-label="werk home"
+              onClick={() => setOpen(false)}
+            >
+              <Logo />
+            </a>
+          )}
 
           <div className="nav__actions">
             <button className="btn btn--primary nav__cta" onClick={onLaunch}>
@@ -93,19 +119,32 @@ export default function Nav({ onLaunch }: NavProps) {
             />
             <div className="nav__panel" id="werk-menu">
               <div className="nav__panel-inner">
-                <p className="nav__panel-label">Jump to</p>
+                <p className="nav__panel-label">{panelLabel}</p>
                 <div className="nav__panel-grid">
-                  {links.map((l) => (
-                    <a
-                      key={l.href}
-                      href={l.href}
-                      className="nav__panel-item"
-                      onClick={goTo(l.href)}
-                    >
-                      <span className="nav__panel-title">{l.label}</span>
-                      <span className="nav__panel-desc">{l.desc}</span>
-                      <Arrow size={16} className="nav__panel-arrow" />
-                    </a>
+                  {items.map((item) => (
+                    item.kind === "anchor" ? (
+                      <a
+                        key={item.href}
+                        href={item.href}
+                        className="nav__panel-item"
+                        onClick={goTo(item.href)}
+                      >
+                        <span className="nav__panel-title">{item.label}</span>
+                        <span className="nav__panel-desc">{item.desc}</span>
+                        <Arrow size={16} className="nav__panel-arrow" />
+                      </a>
+                    ) : (
+                      <button
+                        key={item.label}
+                        type="button"
+                        className="nav__panel-item"
+                        onClick={item.onClick}
+                      >
+                        <span className="nav__panel-title">{item.label}</span>
+                        <span className="nav__panel-desc">{item.desc}</span>
+                        <Arrow size={16} className="nav__panel-arrow" />
+                      </button>
+                    )
                   ))}
                 </div>
                 <button

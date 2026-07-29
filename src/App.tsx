@@ -7,13 +7,15 @@ import UseCases from "./components/UseCases"
 import CTA from "./components/CTA"
 import Footer from "./components/Footer"
 import Studio from "./components/Studio"
+import Docs from "./components/Docs"
+
+type View = "landing" | "docs" | "studio"
 
 export default function App() {
-  // restore the last screen (landing vs studio) so a refresh keeps the user
-  // in the workspace with their package rather than bouncing to the top
-  const [view, setView] = useState<"landing" | "studio">(() => {
+  const [view, setView] = useState<View>(() => {
     try {
-      return localStorage.getItem("werk.view") === "studio" ? "studio" : "landing"
+      const saved = localStorage.getItem("werk.view")
+      return saved === "docs" || saved === "studio" ? saved : "landing"
     } catch {
       return "landing"
     }
@@ -24,7 +26,8 @@ export default function App() {
   }, [view])
 
   useEffect(() => {
-    if (view !== "landing") return
+    if (view === "studio") return
+    window.scrollTo(0, 0)
     const els = Array.from(document.querySelectorAll<HTMLElement>(".reveal"))
     if (!("IntersectionObserver" in window)) {
       els.forEach((el) => el.classList.add("is-in"))
@@ -45,24 +48,29 @@ export default function App() {
     return () => io.disconnect()
   }, [view])
 
-  const launch = () => {
-    setView("studio")
-    window.scrollTo({ top: 0, behavior: "instant" })
-  }
+  const goLanding = () => setView("landing")
+  const goDocs = () => setView("docs")
+  const launch = () => setView("studio")
 
   if (view === "studio") {
-    return <Studio onBack={() => setView("landing")} />
+    return <Studio onBack={goLanding} />
   }
 
   return (
     <>
-      <Nav onLaunch={launch} />
+      <Nav view={view} onHome={goLanding} onDocs={goDocs} onLaunch={launch} />
       <main>
-        <Hero onLaunch={launch} />
-        <HowItWorks />
-        <Assets />
-        <UseCases />
-        <CTA onLaunch={launch} />
+        {view === "docs" ? (
+          <Docs onHome={goLanding} onLaunch={launch} />
+        ) : (
+          <>
+            <Hero onLaunch={launch} />
+            <HowItWorks />
+            <Assets />
+            <UseCases />
+            <CTA onLaunch={launch} />
+          </>
+        )}
       </main>
       <Footer />
     </>

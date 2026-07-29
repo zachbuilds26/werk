@@ -439,7 +439,7 @@ h2.display {
 }
 .nav__panel-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 1px;
   background: var(--line);
   border: 1.5px solid var(--line);
@@ -449,6 +449,8 @@ h2.display {
 }
 .nav__panel-item {
   position: relative;
+  width: 100%;
+  text-align: left;
   background: var(--surface-2);
   padding: 18px 22px;
   display: flex;
@@ -503,6 +505,12 @@ h2.display {
   color: var(--ink);
   font-variation-settings: "opsz" 24;
   flex: none;
+}
+
+.brand--button {
+  padding: 0;
+  background: transparent;
+  border: 0;
 }
 
 /* logo lockup â€” the supplied blue mark beside the lowercase "werk" wordmark. */
@@ -1010,6 +1018,139 @@ h2.display {
 }
 
 /* =====================================================================
+   Docs
+   ===================================================================== */
+.docs__intro {
+  padding-top: clamp(1.5rem, 3vw, 2.75rem);
+}
+
+.docs__intro-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(1.8rem, 3.6vw, 2.5rem);
+  max-width: 920px;
+}
+
+.docs__video {
+  width: 100%;
+  margin: 0;
+}
+
+.docs__frame {
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 8px solid var(--accent);
+  border-radius: clamp(18px, 2.4vw, 28px);
+  background: var(--bg-2);
+  box-shadow: var(--shadow-lg);
+}
+
+.docs__frame iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.docs__caption {
+  margin-top: 14px;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--ink-2);
+  max-width: 72ch;
+  text-align: center;
+}
+
+.docs__hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  text-align: center;
+}
+
+.docs__title {
+  margin-top: 12px;
+}
+
+.docs__lead {
+  max-width: 56ch;
+  margin-inline: auto;
+}
+
+.docs__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+.docs__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.docs__grid--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.docs__card {
+  background: var(--surface-2);
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: clamp(22px, 2.8vw, 32px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.docs__card-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+}
+
+.docs__card-icon svg {
+  width: 19px;
+  height: 19px;
+}
+
+.docs__card-kicker {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.docs__card-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.08rem;
+  line-height: 1.18;
+  color: var(--ink);
+  font-variation-settings: "opsz" 22;
+}
+
+.docs__card-copy {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: 0.93rem;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+/* =====================================================================
    Footer
    ===================================================================== */
 .footer {
@@ -1098,6 +1239,10 @@ h2.display {
   .assets {
     grid-template-columns: repeat(2, 1fr);
   }
+  .docs__grid,
+  .docs__grid--two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .footer__top {
     grid-template-columns: 1fr 1fr;
     gap: 32px;
@@ -1143,6 +1288,10 @@ h2.display {
 
 @media (max-width: 560px) {
   .assets {
+    grid-template-columns: 1fr;
+  }
+  .docs__grid,
+  .docs__grid--two {
     grid-template-columns: 1fr;
   }
   .footer__top {
