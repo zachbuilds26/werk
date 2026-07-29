@@ -139,7 +139,10 @@ test("plans work and drafts only an asset from its encrypted continuation", asyn
       assetId: "a1",
     });
     assert.equal(draftResponse.status, 200);
-    assert.deepEqual((await draftResponse.json() as { result: { draft: AssetDraft } }).result.draft, draft);
+    const drafted = await draftResponse.json() as { result: { draft: AssetDraft; artifact: { parts: Array<{ raw?: string; filename: string; media_type: string }> } } };
+    assert.deepEqual(drafted.result.draft, draft);
+    assert.equal(drafted.result.artifact.parts[0].filename.endsWith(".pdf"), true);
+    assert.equal(typeof drafted.result.artifact.parts[0].raw, "string");
   });
 
   const receivedPlan = planInput as {
