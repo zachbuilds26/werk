@@ -8,7 +8,6 @@ import { hasGroqKey, groqJson } from "./groq.js";
 import { createA2ARouter } from "./a2a.js";
 import { createMarketplaceRouter, PROVIDER_PATH } from "./marketplace.js";
 import { CLARIFY_SYSTEM } from "./prompts.js";
-import { renderDraft } from "./render.js";
 import {
   draftRequestSchema, generateRequestSchema, packageRequestSchema, renderRequestSchema,
   requestPayloadSchema, validationDetails,
@@ -113,6 +112,7 @@ app.post("/api/render", async (req, res) => {
   const parsed = renderRequestSchema.safeParse(req.body);
   if (!parsed.success) return invalid(res, parsed.error);
   try {
+    const { renderDraft } = await import("./render.js");
     const result = await renderDraft(parsed.data.draft, parsed.data.format);
     const safeTitle = parsed.data.draft.title.replace(/[^a-z0-9\-_ ]/gi, "").trim().slice(0, 60) || "output";
     res.setHeader("Content-Type", result.mime);
@@ -127,6 +127,7 @@ app.post("/api/package", async (req, res) => {
   const parsed = packageRequestSchema.safeParse(req.body);
   if (!parsed.success) return invalid(res, parsed.error);
   try {
+    const { renderDraft } = await import("./render.js");
     const zip = new JSZip();
     const index: string[] = [];
     const gaps = new Set<string>();

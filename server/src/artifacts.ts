@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import { renderDraft } from "./render.js";
 import type { AssetDraft, AssetKind, RenderFormat } from "./types.js";
 
 export const RENDER_FORMAT_BY_KIND: Record<AssetKind, RenderFormat> = {
@@ -24,6 +23,7 @@ export interface RenderedFile {
 }
 
 export async function renderFileForDraft(draft: AssetDraft): Promise<RenderedFile> {
+  const { renderDraft } = await import("./render.js");
   const rendered = await renderDraft(draft, RENDER_FORMAT_BY_KIND[draft.kind]);
   return {
     bytes: rendered.bytes,

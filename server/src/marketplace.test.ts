@@ -107,6 +107,20 @@ test("returns a safe unavailable response until the provider is configured", asy
   });
 });
 
+test("keeps discovery online when payment setup is incomplete", async () => {
+  const payment = buildWerkPaymentListing("0xd9002c9e91516ce9ad0155a0d9d9e3092d64ac23", "0.01", false);
+  await withProvider(createMarketplaceRouter(config({ tokenSecret: "" }), operations(), payment), async (baseUrl) => {
+    const discovery = await fetch(baseUrl);
+    assert.equal(discovery.status, 200);
+    const discovered = await discovery.json() as {
+      endpoint: string;
+      payment: { payTo: string };
+    };
+    assert.equal(discovered.endpoint, "/a2mcp/werk");
+    assert.equal(discovered.payment.payTo, payment.payTo);
+  });
+});
+
 test("returns paid discovery metadata and keeps the plan/draft flow intact", async () => {
   const payment = buildWerkPaymentListing("0xd9002c9e91516ce9ad0155a0d9d9e3092d64ac23");
   let planInput: unknown;

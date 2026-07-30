@@ -59,7 +59,11 @@ function defaultWorkspace(context?: Partial<WorkspaceContext>): WorkspaceContext
   return { ...DEFAULT_WORKSPACE, ...context };
 }
 
-function marketplaceReady(config: MarketplaceConfig, payment?: WerkPaymentListing | null): boolean {
+function marketplaceDiscoveryReady(config: MarketplaceConfig): boolean {
+  return config.enabled;
+}
+
+function marketplaceOperationReady(config: MarketplaceConfig, payment?: WerkPaymentListing | null): boolean {
   return config.enabled && config.tokenSecret.length >= 32 && (payment ? payment.ready : true);
 }
 
@@ -79,7 +83,7 @@ export function createMarketplaceRouter(
   });
 
   router.get("/", (_req, res) => {
-    if (!marketplaceReady(config, payment)) {
+    if (!marketplaceDiscoveryReady(config)) {
       return res.status(503).json({ error: { code: "PROVIDER_UNAVAILABLE", message: "The Werk marketplace provider is not available." } });
     }
     if (!payment) {
@@ -110,7 +114,7 @@ export function createMarketplaceRouter(
 
   router.post("/", async (req, res) => {
     const requestId = crypto.randomUUID();
-    if (!marketplaceReady(config, payment)) {
+    if (!marketplaceOperationReady(config, payment)) {
       return providerError(res, requestId, 503, "PROVIDER_UNAVAILABLE", "The Werk marketplace provider is not available. Try again later.");
     }
 
