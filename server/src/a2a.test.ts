@@ -174,3 +174,60 @@ test("returns a task, advances status, and stores a rendered artifact", async ()
     assert.equal(Buffer.from(await artifactResponse.arrayBuffer()).toString("utf8"), "pptx-bytes");
   });
 });
+
+test("posts a decision card when the plan still needs input", async () => {
+  let draftCalls = 0;
+  const planWithInputs: PackagePlan = {
+    ...plan,
+    brief: {
+      ...plan.brief,
+      openInputs: ["Needs your input: GridLink team", "Needs your input: GridLink numbers"],
+    },
+  };
+
+  async function waitForInputRequired(baseUrl: string, taskId: string): Promise<{ status: { state: string }; artifacts: Array<{ artifact_id: string }> }> {
+    const start = Date.now();
+    while (Date.now() - start < 5000) {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}`);
+      if (response.ok) {
+        const task = await response.json() as { status: { state: string }; artifacts: Array<{ artifact_id: string }> };
+        if (task.status.state === "input-required") return task;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error("Task did not pause for input in time.");
+  }
+
+  await withServer(createA2ARouter({ heartbeatMs: 5, taskTtlMs: 60_000 }, {
+    createPlan: async () => planWithInputs,
+    createDraft: async () => {
+      draftCalls += 1;
+      throw new Error("unexpected draft call");
+    },
+    renderFileForDraft: async () => ({
+      bytes: Buffer.from("pdf-bytes"),
+      ext: "pdf",
+      mime: "application/pdf",
+      filename: "decision-card.pdf",
+    }),
+  }), async (baseUrl) => {
+    const response = await post(baseUrl, "/message:send", {
+      message: {
+        messageId: "msg-2",
+        role: "ROLE_USER",
+        parts: [{ text: "Prepare a GridLink plan." }],
+        metadata: { workspaceContext: workspace },
+      },
+      configuration: { returnImmediately: true },
+      metadata: { workspaceContext: workspace },
+    });
+    assert.equal(response.status, 200);
+
+    const sent = await response.json() as { task: { id: string; status: { state: string } } };
+    assert.equal(["submitted", "working"].includes(sent.task.status.state), true);
+
+    const task = await waitForInputRequired(baseUrl, sent.task.id);
+    assert.equal(task.artifacts.length, 1);
+    assert.equal(draftCalls, 0);
+  });
+});

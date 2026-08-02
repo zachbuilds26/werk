@@ -298,13 +298,18 @@ class TaskStore {
     this.broadcast(task, { status_update: { task_id: task.task.id, context_id: task.task.context_id, status: cloneTask(task.task).status } });
   }
 
-  addArtifact(task: TaskRecord, draft: AssetDraft, rendered: Awaited<ReturnType<A2AOperations["renderFileForDraft"]>>): void {
+  addArtifact(
+    task: TaskRecord,
+    draft: AssetDraft,
+    rendered: Awaited<ReturnType<A2AOperations["renderFileForDraft"]>>,
+    options: { description?: string } = {},
+  ): void {
     const base = safeFilename(draft.title) || draft.kind;
     const artifactId = `${task.task.id}-${base}-${task.task.artifacts.length + 1}`;
     const artifact = buildArtifactDescriptor(draft, rendered, {
       artifactId,
       url: this.artifactUrl(task.task.id, artifactId),
-      description: `${draft.kind} deliverable for ${draft.title}`,
+      description: options.description ?? `${draft.kind} deliverable for ${draft.title}`,
     });
     task.task.artifacts = [...task.task.artifacts, artifact];
     task.files.set(artifactId, { bytes: rendered.bytes, mime: rendered.mime, filename: rendered.filename });
@@ -412,14 +417,39 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
         openInputs: input.openInputs,
       }));
 
+      const pendingInputs = [...new Set(plan.brief.openInputs)].filter(Boolean);
       record.task.metadata = {
         ...(record.task.metadata ?? {}),
         packageName: plan.packageName,
         packageTitle: plan.packageTitle,
         reply: plan.reply,
-        openInputs: plan.brief.openInputs,
+        openInputs: pendingInputs,
         assetCount: plan.assets.length,
       };
+
+      if (pendingInputs.length > 0) {
+        store.addStatus(record, "input-required", `Decision card posted. Waiting on ${pendingInputs.length} missing detail${pendingInputs.length === 1 ? "" : "s"}.`);
+        const decisionCard: AssetDraft = {
+          kind: "document",
+          title: `${plan.packageTitle} decision card`,
+          blurb: plan.reply || "I need these details before I can finish the package.",
+          sections: [
+            { heading: "Details to confirm", body: pendingInputs },
+            { heading: "Next step", body: ["Reply with the missing details and I will continue."] },
+          ],
+          metadata: {
+            evidenceIds: [],
+            assumptions: [],
+            gaps: pendingInputs,
+            quality: [],
+            revision: 1,
+          },
+        };
+        const rendered = await operations.renderFileForDraft(decisionCard);
+        store.addArtifact(record, decisionCard, rendered, { description: "Decision card for missing details" });
+        return;
+      }
+
       store.addStatus(record, "working", `Drafting ${plan.assets.length} deliverable${plan.assets.length === 1 ? "" : "s"}.`);
 
       let failures = 0;
@@ -479,13 +509,23 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
     }
 
     const message = normalizeMessage(parsed.data.message);
-    const request = messageText(message);
+    let request = messageText(message);
     if (!request) return res.status(400).json({ error: "Message text is required." });
 
     const workspaceContext = workspaceFromMetadata(parsed.data.metadata ?? parsed.data.message.metadata);
     const openInputs = openInputsFromMetadata(parsed.data.metadata ?? parsed.data.message.metadata);
     const existing = message.task_id ? store.get(message.task_id) : null;
-    if (existing) return res.json({ task: toTaskResponse(existing) });
+    if (existing) {
+      if (existing.task.status.state === "input-required") {
+        const metadata = existing.task.metadata as Record<string, unknown> | undefined;
+        const priorRequest = asString(metadata?.request, 6000);
+        const combinedRequest = priorRequest ? `${priorRequest}\n\nFollow-up details:\n${request}` : request;
+        existing.task.metadata = { ...(metadata ?? {}), request: combinedRequest };
+        existing.task.history = [...existing.task.history, { ...message, context_id: existing.task.context_id, task_id: existing.task.id }];
+        void store.ensureProcessing(existing, () => runTask(existing, { request: combinedRequest, workspaceContext: workspaceFromMetadata(metadata), openInputs: [] }));
+      }
+      return res.json({ task: toTaskResponse(existing) });
+    }
 
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const record = store.create(message, workspaceContext, openInputs, baseUrl);
@@ -500,13 +540,21 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
     }
 
     const message = normalizeMessage(parsed.data.message);
-    const request = messageText(message);
+    let request = messageText(message);
     if (!request) return res.status(400).json({ error: "Message text is required." });
 
     const workspaceContext = workspaceFromMetadata(parsed.data.metadata ?? parsed.data.message.metadata);
     const openInputs = openInputsFromMetadata(parsed.data.metadata ?? parsed.data.message.metadata);
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const record = message.task_id ? store.get(message.task_id) ?? store.create(message, workspaceContext, openInputs, baseUrl) : store.create(message, workspaceContext, openInputs, baseUrl);
+    if (record.task.status.state === "input-required") {
+      const metadata = record.task.metadata as Record<string, unknown> | undefined;
+      const priorRequest = asString(metadata?.request, 6000);
+      const nextRequest = priorRequest ? `${priorRequest}\n\nFollow-up details:\n${request}` : request;
+      request = nextRequest;
+      record.task.metadata = { ...(metadata ?? {}), request: nextRequest };
+      record.task.history = [...record.task.history, { ...message, context_id: record.task.context_id, task_id: record.task.id }];
+    }
 
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     res.setHeader("Cache-Control", "no-cache, no-transform");
