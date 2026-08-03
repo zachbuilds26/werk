@@ -18,7 +18,7 @@ services:
       - key: MARKETPLACE_RATE_LIMIT_MAX
         value: "4"
       - key: OKX_PAYMENT_ENABLED
-        value: "true"
+        value: "false"
       - key: OKX_PAYMENT_RECIPIENT
         sync: false
       - key: OKX_API_KEY

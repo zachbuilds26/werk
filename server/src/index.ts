@@ -24,12 +24,12 @@ const DRAFT_PACE_MS = 18000;
 
 const app = express();
 const werkPayment = createWerkPaymentIntegration();
+const marketplacePayment = werkPayment.health.enabled ? werkPayment.listing : null;
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "1mb" }));
 app.use(createA2ARouter());
 app.use(werkPayment.middleware);
-app.use(PROVIDER_PATH, createMarketplaceRouter(undefined, undefined, werkPayment.listing));
-app.use(PROVIDER_PATH, createMarketplaceRouter());
+app.use(PROVIDER_PATH, createMarketplaceRouter(undefined, undefined, marketplacePayment));
 
 function asString(value: unknown, max: number): string {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
