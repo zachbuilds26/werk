@@ -51,10 +51,32 @@ const draft: AssetDraft = {
   }],
 };
 
+type PublishedDeliverable = {
+  artifact_id: string;
+  filename: string;
+  media_type: string;
+  byteLength: number;
+  url?: string;
+};
+
+type TaskSnapshot = {
+  id: string;
+  status: { state: string; message?: string };
+  artifacts: Array<{ artifact_id: string; parts: Array<{ url?: string; raw?: string; filename: string; media_type: string }> }>;
+  history?: Array<{ message_id: string; parts: Array<{ text?: string }> ; metadata?: Record<string, unknown> }>;
+  metadata?: {
+    marketplace?: { state: string; acceptedAt?: string };
+    publishedDeliverables?: PublishedDeliverable[];
+    failedDeliverables?: number;
+    [key: string]: unknown;
+  };
+};
+
 type A2AResponse =
-  | { task?: { id: string; status: { state: string }; artifacts: Array<{ artifact_id: string; parts: Array<{ url?: string; raw?: string; filename: string; media_type: string }> }> } }
+  | { task?: TaskSnapshot }
   | { status_update?: { task_id: string; status: { state: string; message?: string } } }
-  | { artifact_update?: { task_id: string; artifact: { artifact_id: string; parts: Array<{ url?: string; raw?: string; filename: string; media_type: string }> } } };
+  | { artifact_update?: { task_id: string; artifact: { artifact_id: string; parts: Array<{ url?: string; raw?: string; filename: string; media_type: string }> } } }
+  | { message?: { task_id: string; metadata?: { intent?: string; delivery?: PublishedDeliverable & { task_id: string } }; parts: Array<{ text?: string }> } };
 
 async function withServer(router: ReturnType<typeof createA2ARouter>, run: (baseUrl: string) => Promise<void>): Promise<void> {
   const app = express();
@@ -72,11 +94,12 @@ async function withServer(router: ReturnType<typeof createA2ARouter>, run: (base
   }
 }
 
-async function post(baseUrl: string, path: string, body: unknown): Promise<Response> {
+async function post(baseUrl: string, path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
   return fetch(`${baseUrl}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
 }
 
@@ -86,32 +109,58 @@ async function collectEvents(response: Response): Promise<A2AResponse[]> {
   const decoder = new TextDecoder();
   let buffer = "";
   const events: A2AResponse[] = [];
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const frames = buffer.split("\n\n");
-      buffer = frames.pop() ?? "";
-      for (const frame of frames) {
-        const line = frame.split("\n").find((entry) => entry.startsWith("data:"));
-        if (!line) continue;
-        events.push(JSON.parse(line.slice(5).trim()) as A2AResponse);
+  const terminalStates = new Set(["completed", "failed", "canceled", "rejected"]);
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      const line = frame.split("\n").find((entry) => entry.startsWith("data:"));
+      if (!line) continue;
+      const event = JSON.parse(line.slice(5).trim()) as A2AResponse;
+      events.push(event);
+      if ("task" in event && event.task && terminalStates.has(event.task.status.state)) {
+        return events;
       }
-      if (events.some((event) => "artifact_update" in event)) break;
     }
-  } finally {
-    await reader.cancel().catch(() => undefined);
   }
   return events;
 }
 
-async function waitForCompletedTask(baseUrl: string, taskId: string): Promise<{ status: { state: string }; artifacts: Array<{ artifact_id: string; parts: Array<{ url?: string }> }> }> {
+async function collectUntilDeliver(response: Response, abort: AbortController): Promise<A2AResponse[]> {
+  if (!response.body) throw new Error("No response body.");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const events: A2AResponse[] = [];
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      const line = frame.split("\n").find((entry) => entry.startsWith("data:"));
+      if (!line) continue;
+      const event = JSON.parse(line.slice(5).trim()) as A2AResponse;
+      events.push(event);
+      if ("message" in event && event.message?.metadata?.intent === "deliver") {
+        abort.abort();
+        return events;
+      }
+    }
+  }
+  return events;
+}
+
+async function waitForCompletedTask(baseUrl: string, taskId: string): Promise<TaskSnapshot> {
   const start = Date.now();
   while (Date.now() - start < 5000) {
     const response = await fetch(`${baseUrl}/tasks/${taskId}`);
     if (response.ok) {
-      const task = (await response.json()) as { status: { state: string }; artifacts: Array<{ artifact_id: string; parts: Array<{ url?: string }> }> };
+      const task = (await response.json()) as TaskSnapshot;
       if (task.status.state === "completed") return task;
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -152,20 +201,13 @@ test("returns a task, advances status, and stores a rendered artifact", async ()
     assert.equal(["submitted", "working"].includes(sent.task.status.state), true);
 
     const taskId = sent.task.id;
-    const initialTaskResponse = await fetch(`${baseUrl}/tasks/${taskId}`);
-    assert.equal(initialTaskResponse.status, 200);
-    const initialTask = await initialTaskResponse.json() as { status: { state: string } };
-    assert.equal(["submitted", "working", "completed"].includes(initialTask.status.state), true);
-
-    await new Promise((resolve) => setTimeout(resolve, 35));
-    const workingTaskResponse = await fetch(`${baseUrl}/tasks/${taskId}`);
-    assert.equal(workingTaskResponse.status, 200);
-    const workingTask = await workingTaskResponse.json() as { status: { state: string } };
-    assert.equal(["working", "completed"].includes(workingTask.status.state), true);
-
     const task = await waitForCompletedTask(baseUrl, taskId);
     assert.equal(task.artifacts.length, 1);
     assert.ok(task.artifacts[0].parts[0].url);
+    assert.equal(task.metadata?.marketplace?.state, "accepted");
+    assert.equal(task.metadata?.publishedDeliverables?.length, 1);
+    assert.ok(task.metadata?.publishedDeliverables?.[0].url);
+    assert.equal(task.history?.some((message) => message.metadata?.intent === "deliver"), true);
 
     const artifactId = task.artifacts[0].artifact_id;
     const artifactResponse = await fetch(`${baseUrl}/tasks/${taskId}/artifacts/${artifactId}`);
@@ -175,7 +217,59 @@ test("returns a task, advances status, and stores a rendered artifact", async ()
   });
 });
 
+test("streams progress, delivery, and completion in order", async () => {
+  await withServer(createA2ARouter({ heartbeatMs: 5, taskTtlMs: 60_000 }, {
+    createPlan: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      return plan;
+    },
+    createDraft: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return draft;
+    },
+    renderFileForDraft: async () => ({
+      bytes: Buffer.from("pptx-bytes"),
+      ext: "pptx",
+      mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      filename: "Board deck.pptx",
+    }),
+  }), async (baseUrl) => {
+    const controller = new AbortController();
+    const response = await post(baseUrl, "/message:stream", {
+      message: {
+        messageId: "msg-1",
+        role: "ROLE_USER",
+        parts: [{ text: "Prepare a Q4 board pack for our leadership meeting." }],
+        metadata: { workspaceContext: workspace },
+      },
+      configuration: { returnImmediately: true },
+      metadata: { workspaceContext: workspace },
+    }, controller.signal);
+    assert.equal(response.status, 200);
+
+    const events = await collectUntilDeliver(response, controller);
+    const statusMessages = events.flatMap((event) => "status_update" in event && event.status_update
+      ? [event.status_update.status.message ?? ""]
+      : []);
+    assert.equal(statusMessages.some((message) => message.includes("Accepted")), true);
+    assert.equal(statusMessages.some((message) => message.includes("ETA")), true);
+
+    const artifactIndex = events.findIndex((event) => "artifact_update" in event);
+    const deliverIndex = events.findIndex((event) => "message" in event && event.message?.metadata?.intent === "deliver");
+    assert.ok(artifactIndex >= 0);
+    assert.ok(deliverIndex > artifactIndex);
+
+    const taskId = events.find((event) => "task" in event && event.task)?.task?.id;
+    assert.ok(taskId);
+    const completedTask = await waitForCompletedTask(baseUrl, taskId as string);
+    assert.equal(completedTask.status.state, "completed");
+    assert.equal(completedTask.metadata?.publishedDeliverables?.length, 1);
+    assert.equal(completedTask.history?.some((message) => message.metadata?.intent === "deliver"), true);
+  });
+});
+
 test("posts a decision card when the plan still needs input", async () => {
+  let planCalls = 0;
   let draftCalls = 0;
   const planWithInputs: PackagePlan = {
     ...plan,
@@ -185,12 +279,12 @@ test("posts a decision card when the plan still needs input", async () => {
     },
   };
 
-  async function waitForInputRequired(baseUrl: string, taskId: string): Promise<{ status: { state: string }; artifacts: Array<{ artifact_id: string }> }> {
+  async function waitForInputRequired(baseUrl: string, taskId: string): Promise<TaskSnapshot> {
     const start = Date.now();
     while (Date.now() - start < 5000) {
       const response = await fetch(`${baseUrl}/tasks/${taskId}`);
       if (response.ok) {
-        const task = await response.json() as { status: { state: string }; artifacts: Array<{ artifact_id: string }> };
+        const task = await response.json() as TaskSnapshot;
         if (task.status.state === "input-required") return task;
       }
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -199,10 +293,13 @@ test("posts a decision card when the plan still needs input", async () => {
   }
 
   await withServer(createA2ARouter({ heartbeatMs: 5, taskTtlMs: 60_000 }, {
-    createPlan: async () => planWithInputs,
+    createPlan: async () => {
+      planCalls += 1;
+      return planCalls === 1 ? planWithInputs : plan;
+    },
     createDraft: async () => {
       draftCalls += 1;
-      throw new Error("unexpected draft call");
+      return draft;
     },
     renderFileForDraft: async () => ({
       bytes: Buffer.from("pdf-bytes"),
@@ -226,8 +323,34 @@ test("posts a decision card when the plan still needs input", async () => {
     const sent = await response.json() as { task: { id: string; status: { state: string } } };
     assert.equal(["submitted", "working"].includes(sent.task.status.state), true);
 
-    const task = await waitForInputRequired(baseUrl, sent.task.id);
-    assert.equal(task.artifacts.length, 1);
+    const inputRequiredTask = await waitForInputRequired(baseUrl, sent.task.id);
+    assert.equal(inputRequiredTask.artifacts.length, 1);
+    assert.equal(inputRequiredTask.artifacts[0].description, "Decision card for missing details");
+    assert.equal(inputRequiredTask.metadata?.publishedDeliverables?.length, 1);
+    assert.equal(inputRequiredTask.history?.some((message) => message.metadata?.intent === "deliver"), true);
     assert.equal(draftCalls, 0);
+
+    const followUpResponse = await post(baseUrl, "/message:send", {
+      message: {
+        messageId: "msg-3",
+        taskId: sent.task.id,
+        role: "ROLE_USER",
+        parts: [{ text: "GridLink is the infrastructure team and the numbers are current." }],
+        metadata: { workspaceContext: workspace },
+      },
+      configuration: { returnImmediately: true },
+      metadata: { workspaceContext: workspace },
+    });
+    assert.equal(followUpResponse.status, 200);
+    const resumed = await followUpResponse.json() as { task: { id: string } };
+    assert.equal(resumed.task.id, sent.task.id);
+
+    const completedTask = await waitForCompletedTask(baseUrl, sent.task.id);
+    assert.equal(completedTask.status.state, "completed");
+    assert.equal(completedTask.artifacts.filter((item) => item.description === "Decision card for missing details").length, 1);
+    assert.equal(completedTask.metadata?.publishedDeliverables?.length, 2);
+    assert.equal(completedTask.history?.filter((message) => message.metadata?.intent === "deliver").length, 2);
+    assert.equal(planCalls, 2);
+    assert.equal(draftCalls, 1);
   });
 });

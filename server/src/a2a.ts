@@ -221,14 +221,54 @@ function cloneArtifact(artifact: A2AArtifact): A2AArtifact {
   return structuredClone(artifact);
 }
 
-function taskMessage(task: TaskRecord, text: string): A2AMessage {
+type PublishedDeliverable = {
+  artifact_id: string;
+  name: string;
+  description?: string;
+  filename: string;
+  media_type: string;
+  byteLength: number;
+  url?: string;
+};
+
+function taskMessage(task: TaskRecord, text: string, metadata?: Record<string, unknown>): A2AMessage {
   return {
     message_id: crypto.randomUUID(),
     context_id: task.task.context_id,
     task_id: task.task.id,
     role: "agent",
     parts: [{ text }],
+    ...(metadata ? { metadata } : {}),
   };
+}
+
+function publishedDeliverable(artifact: A2AArtifact): PublishedDeliverable {
+  const part = artifact.parts[0] ?? {};
+  return {
+    artifact_id: artifact.artifact_id,
+    name: artifact.name,
+    description: artifact.description,
+    filename: typeof part.filename === "string" ? part.filename : artifact.name,
+    media_type: typeof part.media_type === "string" ? part.media_type : "application/octet-stream",
+    byteLength: Number(artifact.metadata?.byteLength ?? 0),
+    url: typeof part.url === "string" ? part.url : undefined,
+  };
+}
+
+function deliveryMessage(task: TaskRecord, artifact: A2AArtifact): A2AMessage {
+  const deliverable = publishedDeliverable(artifact);
+  return taskMessage(
+    task,
+    `[intent:deliver] task ${task.task.id} published ${deliverable.artifact_id} (${deliverable.filename}, ${deliverable.media_type}, ${deliverable.byteLength} bytes) ${deliverable.url ?? ""}`.trim(),
+    { intent: "deliver", delivery: { task_id: task.task.id, ...deliverable } },
+  );
+}
+
+function etaMessage(totalAssets: number, publishedAssets: number): string {
+  if (totalAssets <= 0) return "No deliverables are planned yet. ETA: finishing up.";
+  const remaining = Math.max(totalAssets - publishedAssets, 0);
+  const eta = remaining <= 0 ? "finishing up" : remaining === 1 ? "about one more deliverable" : remaining <= 3 ? "a few more deliverables" : "several more deliverables";
+  return `Published ${publishedAssets}/${totalAssets} deliverables. ETA: ${eta}.`;
 }
 
 class TaskStore {
@@ -260,6 +300,11 @@ class TaskStore {
           workspaceContext,
           openInputs,
           baseUrl,
+          marketplace: {
+            state: "accepted",
+            acceptedAt: toIso(now),
+          },
+          publishedDeliverables: [] as PublishedDeliverable[],
         },
       },
       files: new Map(),
@@ -312,6 +357,10 @@ class TaskStore {
       description: options.description ?? `${draft.kind} deliverable for ${draft.title}`,
     });
     task.task.artifacts = [...task.task.artifacts, artifact];
+    task.task.metadata = {
+      ...(task.task.metadata ?? {}),
+      publishedDeliverables: task.task.artifacts.map((item) => publishedDeliverable(item)),
+    };
     task.files.set(artifactId, { bytes: rendered.bytes, mime: rendered.mime, filename: rendered.filename });
     this.broadcast(task, {
       artifact_update: {
@@ -320,6 +369,9 @@ class TaskStore {
         artifact: cloneArtifact(artifact),
       },
     });
+    const delivery = deliveryMessage(task, artifact);
+    task.task.history = [...task.task.history, delivery];
+    this.broadcast(task, { message: delivery });
   }
 
   complete(task: TaskRecord, state: TaskState, message: string): void {
@@ -427,6 +479,8 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
         assetCount: plan.assets.length,
       };
 
+      store.addStatus(record, "working", etaMessage(plan.assets.length, 0));
+
       if (pendingInputs.length > 0) {
         store.addStatus(record, "input-required", `Decision card posted. Waiting on ${pendingInputs.length} missing detail${pendingInputs.length === 1 ? "" : "s"}.`);
         const decisionCard: AssetDraft = {
@@ -477,10 +531,12 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
           const message = error instanceof Error ? error.message : `Drafting ${asset.title} failed.`;
           store.addStatus(record, "working", message);
         }
+
+        store.addStatus(record, "working", etaMessage(plan.assets.length, record.task.artifacts.length + failures));
       }
 
-      const artifactCount = record.task.artifacts.length;
-      if (artifactCount === 0) {
+      const publishedCount = record.task.artifacts.length;
+      if (publishedCount === 0) {
         store.fail(record, "No deliverables were produced.");
         return;
       }
@@ -488,13 +544,15 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
       record.task.metadata = {
         ...(record.task.metadata ?? {}),
         failedDeliverables: failures,
+        publishedDeliverables: record.task.artifacts.map((item) => publishedDeliverable(item)),
       };
 
+      const availability = publishedCount === 1
+        ? "The file is available through the artifact URL."
+        : "Files are available through the artifact URLs.";
       const summary = failures > 0
-        ? `Completed with ${failures} failed deliverable${failures === 1 ? "" : "s"} and ${artifactCount} ready.`
-        : artifactCount === 1
-          ? "The deliverable is ready."
-          : `All ${artifactCount} deliverables are ready.`;
+        ? `Published ${publishedCount} deliverable${publishedCount === 1 ? "" : "s"} with ${failures} failed deliverable${failures === 1 ? "" : "s"}. ${availability}`
+        : `Published ${publishedCount} deliverable${publishedCount === 1 ? "" : "s"}. ${availability}`;
       store.complete(record, "completed", summary);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Task processing failed.";
@@ -529,6 +587,7 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
 
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const record = store.create(message, workspaceContext, openInputs, baseUrl);
+    store.addStatus(record, "working", "Accepted. Planning the package.");
     void store.ensureProcessing(record, () => runTask(record, { request, workspaceContext, openInputs }));
     return res.json({ task: toTaskResponse(record) });
   };
@@ -543,15 +602,19 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
     let request = messageText(message);
     if (!request) return res.status(400).json({ error: "Message text is required." });
 
-    const workspaceContext = workspaceFromMetadata(parsed.data.metadata ?? parsed.data.message.metadata);
-    const openInputs = openInputsFromMetadata(parsed.data.metadata ?? parsed.data.message.metadata);
+    let workspaceContext = workspaceFromMetadata(parsed.data.metadata ?? parsed.data.message.metadata);
+    let openInputs = openInputsFromMetadata(parsed.data.metadata ?? parsed.data.message.metadata);
     const baseUrl = `${req.protocol}://${req.get("host")}`;
-    const record = message.task_id ? store.get(message.task_id) ?? store.create(message, workspaceContext, openInputs, baseUrl) : store.create(message, workspaceContext, openInputs, baseUrl);
+    const existing = message.task_id ? store.get(message.task_id) : null;
+    const freshTask = !existing;
+    const record = existing ?? store.create(message, workspaceContext, openInputs, baseUrl);
     if (record.task.status.state === "input-required") {
       const metadata = record.task.metadata as Record<string, unknown> | undefined;
       const priorRequest = asString(metadata?.request, 6000);
       const nextRequest = priorRequest ? `${priorRequest}\n\nFollow-up details:\n${request}` : request;
       request = nextRequest;
+      workspaceContext = workspaceFromMetadata(metadata);
+      openInputs = [];
       record.task.metadata = { ...(metadata ?? {}), request: nextRequest };
       record.task.history = [...record.task.history, { ...message, context_id: record.task.context_id, task_id: record.task.id }];
     }
@@ -566,14 +629,18 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
     unsubscribe = store.subscribe(record.task.id, (event) => {
       streamEvent(res, event);
       const state = event.task?.status.state;
-      if (state && TERMINAL_STATES.has(state)) {
+      if (event.task && state && TERMINAL_STATES.has(state)) {
         unsubscribe();
         res.end();
       }
     });
-    req.once("close", () => {
-      unsubscribe();
-    });
+    const cleanup = () => unsubscribe();
+    req.once("aborted", cleanup);
+    res.once("close", cleanup);
+
+    if (freshTask) {
+      store.addStatus(record, "working", "Accepted. Planning the package.");
+    }
 
     if (!record.processing && !record.terminal) {
       void store.ensureProcessing(record, () => runTask(record, { request, workspaceContext, openInputs }));
