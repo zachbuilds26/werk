@@ -62,7 +62,7 @@ type PublishedDeliverable = {
 type TaskSnapshot = {
   id: string;
   status: { state: string; message?: string };
-  artifacts: Array<{ artifact_id: string; parts: Array<{ url?: string; raw?: string; filename: string; media_type: string }> }>;
+  artifacts: Array<{ artifact_id: string; description?: string; parts: Array<{ url?: string; raw?: string; filename: string; media_type: string }> }>;
   history?: Array<{ message_id: string; parts: Array<{ text?: string }> ; metadata?: Record<string, unknown> }>;
   metadata?: {
     marketplace?: { state: string; acceptedAt?: string };
@@ -127,6 +127,10 @@ async function collectEvents(response: Response): Promise<A2AResponse[]> {
     }
   }
   return events;
+}
+
+function hasTaskEvent(event: A2AResponse): event is { task: TaskSnapshot } {
+  return "task" in event && Boolean(event.task);
 }
 
 async function collectUntilDeliver(response: Response, abort: AbortController): Promise<A2AResponse[]> {
@@ -259,9 +263,9 @@ test("streams progress, delivery, and completion in order", async () => {
     assert.ok(artifactIndex >= 0);
     assert.ok(deliverIndex > artifactIndex);
 
-    const taskId = events.find((event) => "task" in event && event.task)?.task?.id;
-    assert.ok(taskId);
-    const completedTask = await waitForCompletedTask(baseUrl, taskId as string);
+    const taskEvent = events.find(hasTaskEvent);
+    assert.ok(taskEvent);
+    const completedTask = await waitForCompletedTask(baseUrl, taskEvent.task.id);
     assert.equal(completedTask.status.state, "completed");
     assert.equal(completedTask.metadata?.publishedDeliverables?.length, 1);
     assert.equal(completedTask.history?.some((message) => message.metadata?.intent === "deliver"), true);
