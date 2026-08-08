@@ -293,3 +293,48 @@ test("a paid GET does the work instead of falling through to the SPA", async () 
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });
+
+test("accepts the request under any common key, casing, or repetition", async () => {
+  // The x402 replay forwards only the endpoint URL, so a request that arrives
+  // under an unexpected key is lost entirely. Buyers should not have to know
+  // one exact parameter name.
+  const seen: string[] = [];
+  const app = express();
+  app.use(express.json());
+  app.use("/a2mcp/werk", createMarketplaceRouter(config(), operations({
+    createPlan: async (input) => { seen.push(input.request); return plan; },
+  })));
+
+  const server = createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("no TCP address");
+  const baseUrl = `http://127.0.0.1:${address.port}/a2mcp/werk`;
+
+  try {
+    for (const qs of ["request=Build+a+deck", "q=Build+a+deck", "prompt=Build+a+deck", "Request=Build+a+deck", "TASK=Build+a+deck"]) {
+      const res = await fetch(`${baseUrl}?${qs}`);
+      assert.equal(res.status, 200, `expected 200 for ${qs}`);
+    }
+    assert.equal(seen.length, 5);
+    assert.ok(seen.every((r) => r === "Build a deck"), `unexpected requests: ${JSON.stringify(seen)}`);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((e) => e ? reject(e) : resolve()));
+  }
+});
+
+test("a request-less call returns a copyable example instead of prose", async () => {
+  await withProvider(createMarketplaceRouter(config(), operations()), async (baseUrl) => {
+    const res = await fetch(baseUrl);
+    assert.equal(res.status, 400);
+
+    const body = await res.json() as { inputRequired: boolean; fields: { name: string; required: boolean }[]; example: string };
+    assert.equal(body.inputRequired, true);
+    assert.ok(body.fields.some((f) => f.name === "request" && f.required));
+
+    // The example must itself be a working call, not illustrative text.
+    assert.ok(body.example.includes("?request="), `example lacks a request param: ${body.example}`);
+    const replay = await fetch(body.example);
+    assert.equal(replay.status, 200, "the example URL should succeed as-is");
+  });
+});

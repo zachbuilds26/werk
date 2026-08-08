@@ -118,29 +118,74 @@ export function createMarketplaceRouter(
   // An x402 client replays the paid resource with GET, so GET has to do the same
   // work POST does. Without a GET handler the replay fell through this router to
   // the SPA catch-all and a paying caller received index.html instead of output.
+  // A buyer's request can arrive under any number of reasonable names, and the
+  // x402 replay forwards only the URL, so anything not read here is lost. Being
+  // liberal about the key is the difference between a buyer getting output and
+  // getting an error they cannot diagnose.
+  const REQUEST_KEYS = [
+    "request", "q", "prompt", "query", "input", "text", "task", "description",
+    "message", "brief", "ask", "requirement", "requirements", "content",
+  ];
+
   const invocationFromQuery = (query: Record<string, unknown>): unknown => {
-    const str = (value: unknown): string | undefined => (typeof value === "string" && value.trim() ? value.trim() : undefined);
+    const str = (value: unknown): string | undefined => {
+      if (typeof value === "string" && value.trim()) return value.trim();
+      // Express yields an array when a key repeats; take the first usable one.
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          if (typeof item === "string" && item.trim()) return item.trim();
+        }
+      }
+      return undefined;
+    };
+
+    // Case-insensitive lookup, so `Request` or `PROMPT` work the same way.
+    const lower = new Map<string, unknown>();
+    for (const [key, value] of Object.entries(query)) lower.set(key.toLowerCase(), value);
+    const pick = (...names: string[]): string | undefined => {
+      for (const name of names) {
+        const found = str(lower.get(name.toLowerCase()));
+        if (found) return found;
+      }
+      return undefined;
+    };
 
     // Whole payload in one param, for callers that can carry JSON in a URL.
-    const payload = str(query.payload);
+    const payload = pick("payload", "body", "json");
     if (payload) {
       try {
         return JSON.parse(payload);
       } catch {
-        return undefined;
+        // Not JSON after all — fall through and treat it as request text.
       }
     }
 
-    const operation = str(query.operation) ?? "plan";
+    const operation = pick("operation", "op", "mode") ?? "plan";
     if (operation === "draft") {
-      return { operation, continuationToken: str(query.continuationToken), assetId: str(query.assetId) };
+      return {
+        operation,
+        continuationToken: pick("continuationToken", "continuation_token", "token"),
+        assetId: pick("assetId", "asset_id", "asset"),
+      };
     }
 
-    const request = str(query.request) ?? str(query.q);
+    let request = pick(...REQUEST_KEYS);
+
+    // Last resort: a caller that appends the request with no key at all, e.g.
+    // ...?Create%20a%20proposal — Express parses that as an empty-valued key.
+    if (!request) {
+      for (const [key, value] of Object.entries(query)) {
+        if (value === "" && key.trim() && !REQUEST_KEYS.includes(key.toLowerCase()) && key.length > 12) {
+          request = decodeURIComponent(key).trim();
+          break;
+        }
+      }
+    }
+
     if (!request) return undefined;
     const invocation: Record<string, unknown> = { operation: "plan", request };
 
-    const workspaceContext = str(query.workspaceContext);
+    const workspaceContext = pick("workspaceContext", "workspace_context", "context");
     if (workspaceContext) {
       try {
         invocation.workspaceContext = JSON.parse(workspaceContext);
@@ -150,7 +195,7 @@ export function createMarketplaceRouter(
       }
     }
 
-    const openInputs = str(query.openInputs);
+    const openInputs = pick("openInputs", "open_inputs");
     if (openInputs) {
       try {
         const parsed = JSON.parse(openInputs);
@@ -184,13 +229,29 @@ export function createMarketplaceRouter(
     }
     const parsed = marketplaceInvocationSchema.safeParse(rawInvocation);
     if (!parsed.success) {
-      return providerError(
-        res,
+      // A rejected call is never settled, so this costs the caller nothing. Give
+      // back everything needed to retry correctly: the missing field, and a URL
+      // they can copy, rather than prose they have to interpret.
+      const base = `${req.protocol}://${req.get("host") ?? "werk-rou3.onrender.com"}${req.baseUrl || PROVIDER_PATH}`;
+      res.status(400).json({
         requestId,
-        400,
-        "INVALID_REQUEST",
-        'Send operation="plan" with a request describing the work (POST a JSON body, or pass ?operation=plan&request=... on a GET). Use operation="draft" with continuationToken and assetId to render one asset from a plan.',
-      );
+        error: {
+          code: "INVALID_REQUEST",
+          message: "Add your request to the endpoint URL. The x402 replay forwards only that URL, so the request has to travel on it.",
+        },
+        inputRequired: true,
+        fields: [
+          {
+            name: "request",
+            type: "string",
+            required: true,
+            description: "What you need in plain language. Also accepted: q, prompt, task, brief, description.",
+          },
+        ],
+        example: `${base}?request=${encodeURIComponent("Create a client proposal for a website redesign")}`,
+        howTo: "When creating the task, pass that full URL (with your own request text) as the endpoint.",
+      });
+      return;
     }
 
     // Counted only once the request is known to be well formed, so a caller is

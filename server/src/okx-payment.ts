@@ -134,19 +134,25 @@ export function werkUnpaidResponseBody(): Record<string, unknown> {
 }
 
 export function buildWerkPaymentRoutes(recipient: string, price: string = WERK_PAYMENT_DEFAULT_PRICE): RoutesConfig {
+  const inputDeclaration = werkUnpaidResponseBody();
   const route = {
     accepts: {
       scheme: "exact" as const,
       network: OKX_PAYMENT_NETWORK,
       payTo: recipient,
       price: `$${price}`,
+      // Deliberately no `extra` here. The scheme fills it with the EIP-712
+      // token name and version, and signing throws without them, so setting it
+      // risks replacing the domain data and breaking every payment. The input
+      // declaration goes in the 402 body instead, which is what
+      // unpaidResponseBody exists for.
     },
     description: WERK_PAYMENT_DESCRIPTION,
     mimeType: "application/json" as const,
     // Buyers cannot guess that the request rides on the URL; this tells them.
     unpaidResponseBody: () => ({
       contentType: "application/json",
-      body: werkUnpaidResponseBody(),
+      body: inputDeclaration,
     }),
   };
   return {
