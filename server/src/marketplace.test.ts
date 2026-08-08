@@ -244,3 +244,52 @@ test("returns a timeout response when the generation operation is cancelled", as
     assert.equal((await response.json() as { error: { code: string } }).error.code, "TIMED_OUT");
   });
 });
+
+test("a paid GET does the work instead of falling through to the SPA", async () => {
+  // The x402 client replays the paid resource with GET. Before this, the router
+  // had no GET handler, so the replay fell past it to the SPA catch-all and a
+  // paying caller received index.html. The catch-all below reproduces that
+  // production layout, so this test fails loudly if GET ever escapes again.
+  let planRequest = "";
+  const app = express();
+  app.use(express.json());
+  app.use("/a2mcp/werk", createMarketplaceRouter(config(), operations({
+    createPlan: async (input) => {
+      planRequest = input.request;
+      return plan;
+    },
+  })));
+  app.get(/^(?!\/api).*/, (_req, res) => res.type("html").send("<!doctype html><html></html>"));
+
+  const server = createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Provider test server did not expose a TCP address.");
+  const baseUrl = `http://127.0.0.1:${address.port}/a2mcp/werk`;
+
+  try {
+    const query = new URLSearchParams({ operation: "plan", request: "Create a one-page client proposal" });
+    const response = await fetch(`${baseUrl}?${query.toString()}`);
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type") ?? "", /application\/json/);
+
+    const body = await response.json() as { result: { operation: string; continuationToken: string } };
+    assert.equal(body.result.operation, "plan");
+    assert.ok(body.result.continuationToken.length > 0);
+    assert.equal(planRequest, "Create a one-page client proposal");
+
+    // An unusable GET must still answer JSON, never the SPA shell.
+    const bare = await fetch(baseUrl);
+    assert.equal(bare.status, 400);
+    assert.match(bare.headers.get("content-type") ?? "", /application\/json/);
+    assert.equal((await bare.json() as { error: { code: string } }).error.code, "INVALID_REQUEST");
+
+    // Unknown subpaths under the mount stay JSON too.
+    const missing = await fetch(`${baseUrl}/nope`);
+    assert.equal(missing.status, 404);
+    assert.match(missing.headers.get("content-type") ?? "", /application\/json/);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});

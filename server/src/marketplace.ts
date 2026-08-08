@@ -115,7 +115,54 @@ export function createMarketplaceRouter(
     });
   });
 
-  router.post("/", async (req, res) => {
+  // An x402 client replays the paid resource with GET, so GET has to do the same
+  // work POST does. Without a GET handler the replay fell through this router to
+  // the SPA catch-all and a paying caller received index.html instead of output.
+  const invocationFromQuery = (query: Record<string, unknown>): unknown => {
+    const str = (value: unknown): string | undefined => (typeof value === "string" && value.trim() ? value.trim() : undefined);
+
+    // Whole payload in one param, for callers that can carry JSON in a URL.
+    const payload = str(query.payload);
+    if (payload) {
+      try {
+        return JSON.parse(payload);
+      } catch {
+        return undefined;
+      }
+    }
+
+    const operation = str(query.operation) ?? "plan";
+    if (operation === "draft") {
+      return { operation, continuationToken: str(query.continuationToken), assetId: str(query.assetId) };
+    }
+
+    const request = str(query.request) ?? str(query.q);
+    if (!request) return undefined;
+    const invocation: Record<string, unknown> = { operation: "plan", request };
+
+    const workspaceContext = str(query.workspaceContext);
+    if (workspaceContext) {
+      try {
+        invocation.workspaceContext = JSON.parse(workspaceContext);
+      } catch {
+        // A malformed context is dropped rather than failing the whole call;
+        // defaultWorkspace() supplies a usable fallback.
+      }
+    }
+
+    const openInputs = str(query.openInputs);
+    if (openInputs) {
+      try {
+        const parsed = JSON.parse(openInputs);
+        if (Array.isArray(parsed)) invocation.openInputs = parsed;
+      } catch {
+        invocation.openInputs = openInputs.split(",").map((item) => item.trim()).filter(Boolean);
+      }
+    }
+    return invocation;
+  };
+
+  const runInvocation = async (rawInvocation: unknown, req: express.Request, res: express.Response): Promise<void> => {
     const requestId = crypto.randomUUID();
     if (!marketplaceOperationReady(config, payment)) {
       return providerError(res, requestId, 503, "PROVIDER_UNAVAILABLE", "The Werk marketplace provider is not available. Try again later.");
@@ -135,8 +182,16 @@ export function createMarketplaceRouter(
       res.setHeader("Retry-After", "30");
       return providerError(res, requestId, 429, "BUSY", "The provider is busy. Try again shortly.");
     }
-    const parsed = marketplaceInvocationSchema.safeParse(req.body);
-    if (!parsed.success) return providerError(res, requestId, 400, "INVALID_REQUEST", "The request does not match the Werk provider contract.");
+    const parsed = marketplaceInvocationSchema.safeParse(rawInvocation);
+    if (!parsed.success) {
+      return providerError(
+        res,
+        requestId,
+        400,
+        "INVALID_REQUEST",
+        'Send operation="plan" with a request describing the work (POST a JSON body, or pass ?operation=plan&request=... on a GET). Use operation="draft" with continuationToken and assetId to render one asset from a plan.',
+      );
+    }
 
     // Counted only once the request is known to be well formed, so a caller is
     // not billed quota for a malformed body that never reaches the model.
@@ -156,12 +211,10 @@ export function createMarketplaceRouter(
         const openInputs = parsed.data.openInputs ?? [];
         const plan = await operations.createPlan({ request: parsed.data.request, workspaceContext, openInputs, signal: controller.signal });
         const continuationToken = createContinuationToken(config.tokenSecret, { request: parsed.data.request, workspaceContext, openInputs, plan });
-        return res.status(200).json({ requestId, result: { operation: "plan", plan, continuationToken } });
+        res.status(200).json({ requestId, result: { operation: "plan", plan, continuationToken } });
+        return;
       }
 
-      if (parsed.data.operation !== "draft") {
-        return providerError(res, requestId, 400, "INVALID_REQUEST", "The request does not match the Werk provider contract.");
-      }
       const draftRequest = parsed.data;
       let continuation: ReturnType<typeof readContinuationToken>;
       try {
@@ -181,7 +234,8 @@ export function createMarketplaceRouter(
       });
       const rendered = await renderFileForDraft(draft);
       const artifact = buildArtifactDescriptor(draft, rendered, { artifactId: crypto.randomUUID() });
-      return res.status(200).json({ requestId, result: { operation: "draft", draft, artifact } });
+      res.status(200).json({ requestId, result: { operation: "draft", draft, artifact } });
+      return;
     } catch (error) {
       if (controller.signal.aborted) return providerError(res, requestId, 504, "TIMED_OUT", "The provider could not finish in time. Try again later.");
       return providerError(res, requestId, 503, "GENERATION_UNAVAILABLE", "The provider is temporarily unavailable. Try again later.");
@@ -190,6 +244,17 @@ export function createMarketplaceRouter(
       clearTimeout(timeout);
       res.off("close", abort);
     }
+  };
+
+  router.post("/", (req, res) => runInvocation(req.body, req, res));
+  router.get("/", (req, res) => runInvocation(invocationFromQuery(req.query as Record<string, unknown>), req, res));
+
+  // Nothing under the provider mount may fall through to the SPA catch-all: a
+  // paying caller must always receive JSON, never index.html.
+  router.use((req, res) => {
+    res.status(404).json({
+      error: { code: "NOT_FOUND", message: `No Werk provider route for ${req.method} ${req.originalUrl}.` },
+    });
   });
 
   return router;
