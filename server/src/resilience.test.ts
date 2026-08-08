@@ -27,7 +27,9 @@ test("turns a caller away once the window quota is spent", async () => {
 
     const blocked = await fetch(baseUrl);
     assert.equal(blocked.status, 429);
-    assert.equal(blocked.headers.get("retry-after"), "60");
+    // Derived from the time left in the window, so it can tick down mid-test.
+    const retryAfter = Number(blocked.headers.get("retry-after"));
+    assert.ok(retryAfter > 0 && retryAfter <= 60, `retry-after out of range: ${retryAfter}`);
     assert.equal((await blocked.json() as { error: { code: string } }).error.code, "RATE_LIMITED");
   });
 });

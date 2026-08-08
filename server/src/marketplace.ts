@@ -82,7 +82,10 @@ export function createMarketplaceRouter(
     next();
   });
 
-  router.get("/", (_req, res) => {
+  // Free service metadata. The paid resource itself answers 402 on GET and POST
+  // (x402 discovery probes with GET and treats a 200 as "not an x402 service"),
+  // so unpaid metadata lives here instead of on the resource path.
+  router.get("/info", (_req, res) => {
     if (!marketplaceDiscoveryReady(config)) {
       return res.status(503).json({ error: { code: "PROVIDER_UNAVAILABLE", message: "The Werk marketplace provider is not available." } });
     }

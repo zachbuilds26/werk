@@ -99,7 +99,7 @@ async function post(baseUrl: string, body: unknown): Promise<Response> {
 
 test("returns a safe unavailable response until the provider is configured", async () => {
   await withProvider(createMarketplaceRouter(config({ enabled: false, tokenSecret: "" }), operations()), async (baseUrl) => {
-    const response = await fetch(baseUrl);
+    const response = await fetch(`${baseUrl}/info`);
     assert.equal(response.status, 503);
     assert.deepEqual(await response.json(), {
       error: { code: "PROVIDER_UNAVAILABLE", message: "The Werk marketplace provider is not available." },
@@ -110,7 +110,7 @@ test("returns a safe unavailable response until the provider is configured", asy
 test("keeps discovery online when payment setup is incomplete", async () => {
   const payment = buildWerkPaymentListing("0xd9002c9e91516ce9ad0155a0d9d9e3092d64ac23", "0.01", false);
   await withProvider(createMarketplaceRouter(config({ tokenSecret: "" }), operations(), payment), async (baseUrl) => {
-    const discovery = await fetch(baseUrl);
+    const discovery = await fetch(`${baseUrl}/info`);
     assert.equal(discovery.status, 200);
     const discovered = await discovery.json() as {
       endpoint: string;
@@ -135,7 +135,7 @@ test("returns paid discovery metadata and keeps the plan/draft flow intact", asy
       return draft;
     },
   }), payment), async (baseUrl) => {
-    const discovery = await fetch(baseUrl);
+    const discovery = await fetch(`${baseUrl}/info`);
     assert.equal(discovery.status, 200);
     const discovered = await discovery.json() as {
       endpoint: string;

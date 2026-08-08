@@ -8,6 +8,9 @@ import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
 export const OKX_PAYMENT_NETWORK = "eip155:196" as const;
 export const OKX_PAYMENT_ASSET = "0x779ded0c9e1022225f8e0630b35a9b54be713736" as const;
 export const WERK_PAYMENT_ROUTE = "POST /a2mcp/werk" as const;
+// x402 discovery probes the resource with GET and expects a 402 challenge, so the
+// paid resource is gated on both verbs. Free service metadata lives on /info.
+export const WERK_PAYMENT_DISCOVERY_ROUTE = "GET /a2mcp/werk" as const;
 export const WERK_PAYMENT_DESCRIPTION =
   "Werk turns one plain-language request into a plan and draft business assets such as presentations, reports, spreadsheets, agendas, action items, and timelines. Each POST is billed separately in USDT0 on X Layer, and drafts may surface missing inputs that the buyer still needs to confirm.";
 // Matches the on-chain service listing for agent 9872. A server that charges
@@ -92,6 +95,16 @@ export function buildWerkPaymentListing(recipient: string | null, price: string 
 export function buildWerkPaymentRoutes(recipient: string, price: string = WERK_PAYMENT_DEFAULT_PRICE): RoutesConfig {
   return {
     [WERK_PAYMENT_ROUTE]: {
+      accepts: {
+        scheme: "exact",
+        network: OKX_PAYMENT_NETWORK,
+        payTo: recipient,
+        price: `$${price}`,
+      },
+      description: WERK_PAYMENT_DESCRIPTION,
+      mimeType: "application/json",
+    },
+    [WERK_PAYMENT_DISCOVERY_ROUTE]: {
       accepts: {
         scheme: "exact",
         network: OKX_PAYMENT_NETWORK,
