@@ -2,6 +2,7 @@ import "dotenv/config";
 import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import cors from "cors";
 import express from "express";
 import JSZip from "jszip";
 import { hasGroqKey, groqJson } from "./groq.js";
@@ -16,6 +17,8 @@ import { buildWorkspaceRequest } from "./workspace.js";
 import { createDraft, createPlan, withOpenInputs } from "./workflows.js";
 import type { ClarifyQuestion, ClarifyResult } from "./types.js";
 import { createWerkPaymentIntegration } from "./okx-payment.js";
+import { createRateLimiter, positiveInteger } from "./rate-limit.js";
+import { startKeepAlive } from "./keepalive.js";
 
 const PORT = Number(process.env.PORT) || 8787;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -24,12 +27,44 @@ const DRAFT_PACE_MS = 18000;
 
 const app = express();
 const werkPayment = createWerkPaymentIntegration();
-const marketplacePayment = werkPayment.health.enabled ? werkPayment.listing : null;
+// Only publish payment details a buyer can actually pay to. When payment is
+// switched on but incomplete the listing would otherwise advertise a real
+// price alongside the zero address, and a buyer paying that loses the funds.
+const marketplacePayment = werkPayment.health.ready ? werkPayment.listing : null;
+
+// Model and render work is metered per caller. A2A and the marketplace are the
+// agent-facing surfaces, so they also accept cross-origin browser clients.
+const apiLimiter = createRateLimiter({
+  max: positiveInteger(process.env.API_RATE_LIMIT_MAX, 40),
+  windowMs: positiveInteger(process.env.API_RATE_LIMIT_WINDOW_MS, 60 * 60 * 1000),
+  maxConcurrent: positiveInteger(process.env.API_MAX_CONCURRENT, 4),
+});
+const agentLimiter = createRateLimiter({
+  max: positiveInteger(process.env.AGENT_RATE_LIMIT_MAX, 30),
+  windowMs: positiveInteger(process.env.AGENT_RATE_LIMIT_WINDOW_MS, 60 * 60 * 1000),
+  maxConcurrent: positiveInteger(process.env.AGENT_MAX_CONCURRENT, 2),
+});
+
+// Only the request-shaped routes cost anything. Reads (task status, artifact
+// downloads) stay unmetered so a long-running stream cannot starve a caller
+// collecting the deliverables it already paid for.
+const postOnly = (limiter: express.RequestHandler): express.RequestHandler =>
+  (req, res, next) => (req.method === "POST" ? limiter(req, res, next) : next());
+
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "1mb" }));
-app.use(createA2ARouter());
+
+// Health has to answer for the platform health check and the keepalive ping, so
+// it is registered before any limiter and stays free.
+app.get("/api/health", (_req, res) => res.json({ ok: true, groq: hasGroqKey(), payment: werkPayment.health }));
+
+// A2A settles through the marketplace task escrow rather than an x402 challenge
+// on this endpoint, so it stays outside the payment middleware on purpose. It is
+// rate limited instead, because it runs the full model pipeline.
+app.use(cors(), postOnly(agentLimiter), createA2ARouter());
 app.use(werkPayment.middleware);
 app.use(PROVIDER_PATH, createMarketplaceRouter(undefined, undefined, marketplacePayment));
+app.use("/api", postOnly(apiLimiter));
 
 function asString(value: unknown, max: number): string {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -55,8 +90,6 @@ function coerceClarify(raw: unknown): ClarifyResult {
   if (!questions.length) throw new Error("Werk could not form safe clarification questions. Please try again.");
   return { mode: "clarify", reply: asString(obj.reply, 240), questions };
 }
-
-app.get("/api/health", (_req, res) => res.json({ ok: true, groq: hasGroqKey(), payment: werkPayment.health }));
 
 app.post("/api/clarify", async (req, res) => {
   const parsed = requestPayloadSchema.safeParse(req.body);
@@ -161,18 +194,38 @@ app.post("/api/generate", async (req, res) => {
   if (!plan) return res.status(400).json({ error: "Review and confirm the suggested outputs before creating drafts." });
   const jobId = crypto.randomUUID();
   let sequence = 0;
+  // A client that navigates away must not leave the loop running: each
+  // remaining asset would spend model quota writing to a closed socket.
+  const controller = new AbortController();
+  const stop = () => controller.abort();
+  res.once("close", stop);
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
-  const send = (event: Record<string, unknown>) => res.write(`data: ${JSON.stringify({ ...event, jobId, sequence: ++sequence })}\n\n`);
+  const send = (event: Record<string, unknown>) => {
+    if (controller.signal.aborted || res.writableEnded) return;
+    res.write(`data: ${JSON.stringify({ ...event, jobId, sequence: ++sequence })}\n\n`);
+  };
+  const paused = (ms: number) => new Promise<void>((resolve) => {
+    if (controller.signal.aborted) return resolve();
+    const timer = setTimeout(finish, ms);
+    function finish(): void {
+      clearTimeout(timer);
+      controller.signal.removeEventListener("abort", finish);
+      resolve();
+    }
+    controller.signal.addEventListener("abort", finish, { once: true });
+  });
   try {
     send({ type: "job-started" });
     send({ type: "plan", plan });
     plan.assets.forEach((asset) => send({ type: "asset-status", id: asset.id, status: "queued" }));
     for (const [index, asset] of plan.assets.entries()) {
-      if (index > 0) await new Promise((resolve) => setTimeout(resolve, DRAFT_PACE_MS));
+      if (controller.signal.aborted) break;
+      if (index > 0) await paused(DRAFT_PACE_MS);
+      if (controller.signal.aborted) break;
       try {
         send({ type: "asset-status", id: asset.id, status: "drafting" });
         const draft = await createDraft({
@@ -181,12 +234,14 @@ app.post("/api/generate", async (req, res) => {
           openInputs: payload.openInputs,
           assetPlan: asset,
           brief: plan.brief,
+          signal: controller.signal,
           onStage: (stage) => send({ type: "asset-status", id: asset.id, status: stage }),
         });
         const warnings = draft.metadata?.quality.filter((issue) => issue.severity === "warning") ?? [];
         if (warnings.length) send({ type: "quality-warning", id: asset.id, issues: warnings });
         send({ type: "draft", id: asset.id, draft });
       } catch (error) {
+        if (controller.signal.aborted) break;
         send({ type: "draft-error", id: asset.id, message: error instanceof Error ? error.message : "Drafting failed" });
       }
     }
@@ -195,6 +250,8 @@ app.post("/api/generate", async (req, res) => {
   } catch (error) {
     send({ type: "error", message: error instanceof Error ? error.message : "Generation failed" });
     res.end();
+  } finally {
+    res.off("close", stop);
   }
 });
 
@@ -203,4 +260,8 @@ app.use(express.static(clientDist));
 app.get(/^(?!\/api).*/, (_req, res) => res.sendFile(path.join(clientDist, "index.html"), (error) => {
   if (error) res.status(204).end();
 }));
-app.listen(PORT, () => console.log(`\n  werk API on http://localhost:${PORT}  (groq: ${hasGroqKey() ? "on" : "off"})\n`));
+app.listen(PORT, () => {
+  const keepAlive = startKeepAlive();
+  const warm = keepAlive.enabled ? "on" : "off";
+  console.log(`\n  werk API on http://localhost:${PORT}  (groq: ${hasGroqKey() ? "on" : "off"}, keepalive: ${warm})\n`);
+});

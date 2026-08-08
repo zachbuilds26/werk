@@ -14,6 +14,9 @@ const DEFAULT_WORKSPACE: WorkspaceContext = {
 
 const DEFAULT_TASK_TTL_MS = 60 * 60 * 1000;
 const DEFAULT_HEARTBEAT_MS = 12 * 1000;
+// Records hold their rendered artifacts as in-memory buffers, so the store is
+// capped as well as expiry-swept. Sized for a small instance.
+const MAX_TRACKED_TASKS = 200;
 const TERMINAL_STATES = new Set<TaskState>(["completed", "failed", "canceled", "rejected"]);
 
 type TaskState = "submitted" | "working" | "completed" | "failed" | "canceled" | "rejected" | "input-required" | "auth-required";
@@ -386,7 +389,11 @@ class TaskStore {
   }
 
   broadcast(task: TaskRecord, event: StreamResponse): void {
-    for (const listener of task.subscribers) listener(structuredClone(event));
+    if (!task.subscribers.size) return;
+    // One clone for the whole fan-out: each listener serialises the event
+    // immediately, so no listener can observe another's copy.
+    const payload = structuredClone(event);
+    for (const listener of task.subscribers) listener(payload);
   }
 
   ensureProcessing(task: TaskRecord, run: () => Promise<void>): Promise<void> {
@@ -413,8 +420,26 @@ class TaskStore {
   private pruneExpired(): void {
     const now = Date.now();
     for (const [taskId, task] of this.tasks) {
-      if (task.processing || !task.terminal) continue;
+      // Work in flight is never dropped. Everything else goes on expiry, including
+      // a task parked in "input-required" that no caller ever answered — those are
+      // not terminal, so a terminal-only sweep would retain them (and their
+      // in-memory artifact buffers) for the life of the process.
+      if (task.processing) continue;
       if (task.expiresAt > now) continue;
+      task.subscribers.clear();
+      task.files.clear();
+      this.tasks.delete(taskId);
+    }
+    // Backstop for a burst that outruns the TTL: drop the oldest records first so
+    // a flood of new tasks cannot grow the store without bound.
+    if (this.tasks.size <= MAX_TRACKED_TASKS) return;
+    const byAge = [...this.tasks.entries()]
+      .filter(([, task]) => !task.processing)
+      .sort((left, right) => left[1].expiresAt - right[1].expiresAt);
+    for (const [taskId, task] of byAge) {
+      if (this.tasks.size <= MAX_TRACKED_TASKS) break;
+      task.subscribers.clear();
+      task.files.clear();
       this.tasks.delete(taskId);
     }
   }
@@ -567,7 +592,7 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
     }
 
     const message = normalizeMessage(parsed.data.message);
-    let request = messageText(message);
+    const request = messageText(message);
     if (!request) return res.status(400).json({ error: "Message text is required." });
 
     const workspaceContext = workspaceFromMetadata(parsed.data.metadata ?? parsed.data.message.metadata);
@@ -635,7 +660,8 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
       }
     });
     const cleanup = () => unsubscribe();
-    req.once("aborted", cleanup);
+    // "close" on the response covers both a finished stream and a client that
+    // hung up; the request's "aborted" event is deprecated.
     res.once("close", cleanup);
 
     if (freshTask) {

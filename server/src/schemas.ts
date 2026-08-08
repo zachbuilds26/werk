@@ -90,9 +90,16 @@ export const packageBriefSchema = z.object({
   knownDetails: textList(16, 280), openInputs: textList(12, 280), sharedTerms: textList(12, 100), consistencyRules: textList(12, 180),
 }).strict();
 
+/**
+ * Assets a single package may contain. The planner deliberately recommends a
+ * small reviewable set, and the API boundary holds the same ceiling so a
+ * hand-built plan cannot request more work than the planner would ever produce.
+ */
+export const MAX_PLAN_ASSETS = 4;
+
 export const packagePlanSchema = z.object({
   packageName: text(80), packageTitle: text(180), reply: text(280), brief: packageBriefSchema,
-  assets: z.array(assetPlanSchema).min(1).max(6),
+  assets: z.array(assetPlanSchema).min(1).max(MAX_PLAN_ASSETS),
 }).strict();
 
 export const generateRequestSchema = requestPayloadSchema.extend({
@@ -111,7 +118,7 @@ export const draftRequestSchema = requestPayloadSchema.extend({
 export const renderRequestSchema = z.object({ draft: assetDraftSchema, format: renderFormatSchema }).strict();
 export const packageRequestSchema = z.object({
   packageName: text(120),
-  items: z.array(z.object({ draft: assetDraftSchema, format: renderFormatSchema }).strict()).min(1).max(6),
+  items: z.array(z.object({ draft: assetDraftSchema, format: renderFormatSchema }).strict()).min(1).max(MAX_PLAN_ASSETS),
 }).strict();
 
 export function validationDetails(error: z.ZodError): { path: string; message: string }[] {

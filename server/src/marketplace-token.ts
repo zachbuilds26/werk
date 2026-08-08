@@ -15,8 +15,18 @@ type ContinuationPayload = {
   plan: PackagePlan;
 };
 
+// scrypt is deliberately slow (tens of milliseconds and ~16MB per call), which
+// is right for deriving the key and wrong for doing it per request: a malformed
+// token would otherwise cost the server a full derivation before it fails.
+// The secret is fixed for the process lifetime, so derive once and reuse.
+const keyCache = new Map<string, Buffer>();
+
 function keyFor(secret: string): Buffer {
-  return crypto.scryptSync(secret, "werk-marketplace-continuation", 32);
+  const cached = keyCache.get(secret);
+  if (cached) return cached;
+  const derived = crypto.scryptSync(secret, "werk-marketplace-continuation", 32);
+  keyCache.set(secret, derived);
+  return derived;
 }
 
 function encode(value: Buffer): string {

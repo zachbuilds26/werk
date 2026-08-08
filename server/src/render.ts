@@ -142,7 +142,7 @@ function drawPdfTable(
   const bottomMargin = 56;
 
   const cellHeight = (text: string, bold = false) => {
-    doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(fs);
+    doc.font(bold ? "head-bold" : "body").fontSize(fs);
     return doc.heightOfString(text || " ", { width: cellW, lineGap: 1 });
   };
   const headerH = Math.max(22, ...columns.map((column) => cellHeight(column, true) + padding * 2));
@@ -153,7 +153,7 @@ function drawPdfTable(
   let tableStart = y;
   const drawHeader = () => {
     doc.rect(left, y, width, headerH).fillColor(HEX.bg2).fill();
-    doc.fillColor(HEX.ink).fontSize(fs).font("Helvetica-Bold");
+    doc.fillColor(HEX.ink).fontSize(fs).font("head-bold");
     columns.forEach((column, index) => {
       doc.text(column, left + index * colW + padding, y + padding, {
         width: cellW,
@@ -182,7 +182,7 @@ function drawPdfTable(
     if (y + height > doc.page.height - bottomMargin) nextPage();
 
     if (rowIndex % 2 === 1) doc.rect(left, y, width, height).fillColor("F7FBFE").fill();
-    doc.fillColor(HEX.ink2).fontSize(fs).font("Helvetica");
+    doc.fillColor(HEX.ink2).fontSize(fs).font("body");
     row.forEach((cell, index) => {
       doc.text(cell ?? "", left + index * colW + padding, y + padding, {
         width: cellW,
@@ -206,6 +206,7 @@ function toPdf(d: AssetDraft): Promise<Buffer> {
     bufferPages: true,
     info: { Title: d.title, Author: "Werk" },
   });
+  registerFonts(doc);
   const bufs: Buffer[] = [];
   doc.on("data", (b: Buffer) => bufs.push(b));
 
@@ -217,12 +218,12 @@ function toPdf(d: AssetDraft): Promise<Buffer> {
   // brand header band
   doc.rect(0, 0, pageW, 6).fillColor(HEX.accent).fill();
   doc
-    .font("Helvetica-Bold")
+    .font("head-bold")
     .fontSize(8)
     .fillColor(HEX.muted)
     .text("Werk", margin, 26, { lineBreak: false });
   doc
-    .font("Helvetica")
+    .font("body")
     .fontSize(8)
     .fillColor(HEX.muted)
     .text(d.kind.toUpperCase(), pageW - margin, 26, { align: "right", lineBreak: false });
@@ -230,7 +231,7 @@ function toPdf(d: AssetDraft): Promise<Buffer> {
   // title
   let y = 54;
   doc
-    .font("Helvetica-Bold")
+    .font("head-bold")
     .fontSize(22)
     .fillColor(HEX.ink)
     .text(d.title, margin, y, { width: contentW });
@@ -238,7 +239,7 @@ function toPdf(d: AssetDraft): Promise<Buffer> {
 
   // blurb
   doc
-    .font("Helvetica")
+    .font("body")
     .fontSize(10.5)
     .fillColor(HEX.ink2)
     .text(d.blurb, margin, y, { width: contentW });
@@ -246,9 +247,9 @@ function toPdf(d: AssetDraft): Promise<Buffer> {
 
   const gaps = d.metadata?.gaps ?? [];
   if (gaps.length) {
-    doc.font("Helvetica-Bold").fontSize(9).fillColor(HEX.ink).text("DETAILS TO CONFIRM", margin, y, { width: contentW });
+    doc.font("head-bold").fontSize(9).fillColor(HEX.ink).text("DETAILS TO CONFIRM", margin, y, { width: contentW });
     y = doc.y + 3;
-    doc.font("Helvetica").fontSize(9).fillColor(HEX.ink2).text(gaps.map((gap) => `• ${gap}`).join("\n"), margin, y, { width: contentW });
+    doc.font("body").fontSize(9).fillColor(HEX.ink2).text(gaps.map((gap) => `• ${gap}`).join("\n"), margin, y, { width: contentW });
     y = doc.y + 10;
   } else {
     y += 6;
@@ -266,18 +267,18 @@ function toPdf(d: AssetDraft): Promise<Buffer> {
           y = margin;
         }
         doc
-          .font("Helvetica-Bold")
+          .font("head-bold")
           .fontSize(8)
           .fillColor(HEX.muted)
           .text(s.eyebrow.toUpperCase(), margin, y, { width: contentW });
         y = doc.y + 2;
         doc
-          .font("Helvetica-Bold")
+          .font("head-bold")
           .fontSize(14)
           .fillColor(HEX.ink)
           .text(s.title, margin, y, { width: contentW });
         y = doc.y + 6;
-        doc.font("Helvetica").fontSize(11).fillColor(HEX.ink2);
+        doc.font("body").fontSize(11).fillColor(HEX.ink2);
         for (const b of s.bullets) {
           doc.text(`•  ${b}`, margin + 12, y, { width: contentW - 12 });
           y = doc.y + 3;
@@ -293,12 +294,12 @@ function toPdf(d: AssetDraft): Promise<Buffer> {
           y = margin;
         }
         doc
-          .font("Helvetica-Bold")
+          .font("head-bold")
           .fontSize(13)
           .fillColor(HEX.ink)
           .text(s.heading, margin, y, { width: contentW });
         y = doc.y + 6;
-        doc.font("Helvetica").fontSize(11).fillColor(HEX.ink2);
+        doc.font("body").fontSize(11).fillColor(HEX.ink2);
         for (const p of s.body) {
           doc.text(p, margin, y, { width: contentW });
           y = doc.y + 6;
@@ -343,7 +344,7 @@ function toPdf(d: AssetDraft): Promise<Buffer> {
   for (let i = 0; i < range.count; i++) {
     doc.switchToPage(i);
     doc
-      .font("Helvetica")
+      .font("body")
       .fontSize(8)
       .fillColor(HEX.muted)
       .text(`${i + 1} / ${range.count}`, margin, pageH - 34, {

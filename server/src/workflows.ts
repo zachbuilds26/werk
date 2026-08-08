@@ -1,7 +1,7 @@
 import { groqJson } from "./groq.js";
 import { DRAFT_SYSTEM, PLAN_SYSTEM } from "./prompts.js";
 import { qualityErrors, validateDraftQuality } from "./quality.js";
-import { assetDraftSchema } from "./schemas.js";
+import { MAX_PLAN_ASSETS, assetDraftSchema } from "./schemas.js";
 import { buildWorkspaceRequest } from "./workspace.js";
 import type {
   AssetDraft, AssetKind, AssetPlan, PackageBrief, PackagePlan, QualityIssue, WorkspaceContext,
@@ -59,7 +59,7 @@ export function coercePlan(raw: unknown): PackagePlan {
       dependencies: textList(asset.dependencies, 8, 180),
     };
   });
-  const assets: AssetPlan[] = proposedAssets.filter((asset): asset is AssetPlan => asset !== null).slice(0, 4).map((asset, index) => ({ ...asset, id: `a${index + 1}` }));
+  const assets: AssetPlan[] = proposedAssets.filter((asset): asset is AssetPlan => asset !== null).slice(0, MAX_PLAN_ASSETS).map((asset, index) => ({ ...asset, id: `a${index + 1}` }));
   if (!assets.length) throw new Error("Werk could not suggest a useful set of outputs. Please make the request more specific.");
   return {
     packageName: asString(obj.packageName, 80) || "Suggested work",

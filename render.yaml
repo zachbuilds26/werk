@@ -17,8 +17,11 @@ services:
         value: "1"
       - key: MARKETPLACE_RATE_LIMIT_MAX
         value: "4"
+      # Matches the live dashboard. Keep in step: a redeploy from this
+      # blueprint overwrites the dashboard value and would silently
+      # switch the x402 paywall off.
       - key: OKX_PAYMENT_ENABLED
-        value: "false"
+        value: "true"
       - key: OKX_PAYMENT_RECIPIENT
         sync: false
       - key: OKX_API_KEY

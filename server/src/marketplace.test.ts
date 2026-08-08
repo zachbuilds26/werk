@@ -200,10 +200,13 @@ test("returns paid discovery metadata and keeps the plan/draft flow intact", asy
 
 test("rejects malformed, altered, and rate-limited provider requests", async () => {
   await withProvider(createMarketplaceRouter(config({ rateLimitMax: 2 }), operations()), async (baseUrl) => {
+    // A body that fails the contract is rejected before it costs the caller
+    // any quota, so this request must not count toward the limit below.
     const malformed = await post(baseUrl, { operation: "plan" });
     assert.equal(malformed.status, 400);
     assert.equal((await malformed.json() as { error: { code: string } }).error.code, "INVALID_REQUEST");
 
+    // Well formed, so it is counted, even though the token itself is rejected.
     const invalidToken = await post(baseUrl, {
       operation: "draft",
       continuationToken: "not-a-token",
@@ -211,6 +214,12 @@ test("rejects malformed, altered, and rate-limited provider requests", async () 
     });
     assert.equal(invalidToken.status, 400);
     assert.equal((await invalidToken.json() as { error: { code: string } }).error.code, "INVALID_CONTINUATION");
+
+    const accepted = await post(baseUrl, {
+      operation: "plan",
+      request: "Prepare a product launch package.",
+    });
+    assert.equal(accepted.status, 200);
 
     const rateLimited = await post(baseUrl, {
       operation: "plan",

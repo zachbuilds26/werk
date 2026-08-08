@@ -132,15 +132,19 @@ export function createMarketplaceRouter(
       res.setHeader("Retry-After", "30");
       return providerError(res, requestId, 429, "BUSY", "The provider is busy. Try again shortly.");
     }
-    rateLimits.set(key, { count: (entry?.count ?? 0) + 1, resetAt: entry?.resetAt ?? now + config.rateLimitWindowMs });
-
     const parsed = marketplaceInvocationSchema.safeParse(req.body);
     if (!parsed.success) return providerError(res, requestId, 400, "INVALID_REQUEST", "The request does not match the Werk provider contract.");
+
+    // Counted only once the request is known to be well formed, so a caller is
+    // not billed quota for a malformed body that never reaches the model.
+    rateLimits.set(key, { count: (entry?.count ?? 0) + 1, resetAt: entry?.resetAt ?? now + config.rateLimitWindowMs });
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
     const abort = () => controller.abort();
-    req.once("aborted", abort);
+    // "close" on the response covers a client that hung up mid-request; the
+    // request's "aborted" event is deprecated.
+    res.once("close", abort);
     activeRequests += 1;
 
     try {
@@ -181,7 +185,7 @@ export function createMarketplaceRouter(
     } finally {
       activeRequests -= 1;
       clearTimeout(timeout);
-      req.off("aborted", abort);
+      res.off("close", abort);
     }
   });
 
