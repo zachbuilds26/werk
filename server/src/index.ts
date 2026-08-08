@@ -7,6 +7,7 @@ import express from "express";
 import JSZip from "jszip";
 import { hasGroqKey, groqJson } from "./groq.js";
 import { createA2ARouter } from "./a2a.js";
+import { AGENT_CARD_PATH, createAgentCardRouter } from "./agent-card.js";
 import { createMarketplaceRouter, PROVIDER_PATH } from "./marketplace.js";
 import { CLARIFY_SYSTEM } from "./prompts.js";
 import {
@@ -72,6 +73,12 @@ const agentGate: express.RequestHandler = (req, res, next) => {
 // A2A settles through the marketplace task escrow rather than an x402 challenge
 // on this endpoint, so it stays outside the payment middleware on purpose. It is
 // rate limited instead, because it runs the full model pipeline.
+// Agent discovery. Registered before the SPA catch-all, which would otherwise
+// answer the well-known path with index.html and a 200. Unmetered and
+// cross-origin readable, because a client that cannot read the card cannot
+// reach the agent at all.
+app.get(AGENT_CARD_PATH, cors(), createAgentCardRouter());
+
 app.use(agentGate, createA2ARouter());
 app.use(werkPayment.middleware);
 app.use(PROVIDER_PATH, createMarketplaceRouter(undefined, undefined, marketplacePayment));

@@ -6,7 +6,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc && npm run copy-fonts",
     "start": "node dist/index.js",
-    "test": "tsx --test src/groq.test.ts src/workspace.test.ts src/quality.test.ts src/prompts.test.ts src/marketplace-token.test.ts src/marketplace.test.ts src/okx-payment.test.ts src/a2a.test.ts src/resilience.test.ts",
+    "test": "tsx --test src/groq.test.ts src/workspace.test.ts src/quality.test.ts src/prompts.test.ts src/marketplace-token.test.ts src/marketplace.test.ts src/okx-payment.test.ts src/a2a.test.ts src/resilience.test.ts src/agent-card.test.ts",
     "copy-fonts": "node copy-fonts.mjs"
   },
   "dependencies": {
