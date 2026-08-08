@@ -10,8 +10,17 @@ export const OKX_PAYMENT_ASSET = "0x779ded0c9e1022225f8e0630b35a9b54be713736" as
 export const WERK_PAYMENT_ROUTE = "POST /a2mcp/werk" as const;
 export const WERK_PAYMENT_DESCRIPTION =
   "Werk turns one plain-language request into a plan and draft business assets such as presentations, reports, spreadsheets, agendas, action items, and timelines. Each POST is billed separately in USDT0 on X Layer, and drafts may surface missing inputs that the buyer still needs to confirm.";
-export const WERK_PAYMENT_DEFAULT_PRICE = "0.01" as const;
-export const WERK_PAYMENT_PRICE_LABEL = `${WERK_PAYMENT_DEFAULT_PRICE} USDT0 / POST` as const;
+// Matches the on-chain service listing for agent 9872. A server that charges
+// less than the listing advertises would let a buyer pay the smaller amount and
+// still claim the deliverable, so these two numbers must be kept in step.
+export const WERK_PAYMENT_DEFAULT_PRICE = "1" as const;
+
+/** Human-readable price, derived rather than string-substituted. */
+export function werkPaymentPriceLabel(price: string = WERK_PAYMENT_DEFAULT_PRICE): string {
+  return `${price} USDT0 / POST`;
+}
+
+export const WERK_PAYMENT_PRICE_LABEL = werkPaymentPriceLabel();
 export const WERK_PAYMENT_ROUTE_PRICE = `$${WERK_PAYMENT_DEFAULT_PRICE}` as const;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -67,7 +76,7 @@ function buildListing(ready: boolean, recipient: string | null, price: string): 
   return {
     ready,
     description: WERK_PAYMENT_DESCRIPTION,
-    pricing: WERK_PAYMENT_PRICE_LABEL.replace(WERK_PAYMENT_DEFAULT_PRICE, price),
+    pricing: werkPaymentPriceLabel(price),
     scheme: "exact",
     network: OKX_PAYMENT_NETWORK,
     asset: OKX_PAYMENT_ASSET,

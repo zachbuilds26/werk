@@ -31,4 +31,4 @@ services:
       - key: OKX_PASSPHRASE
         sync: false
       - key: OKX_PAYMENT_PRICE_USDT0
-        value: "0.01"
+        value: "1"
