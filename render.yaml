@@ -13,10 +13,14 @@ services:
         value: "true"
       - key: MARKETPLACE_TOKEN_SECRET
         sync: false
+      # Sized so a reviewer testing alongside normal traffic is not turned away.
+      # One buyer needs several calls for a full package (one plan, then a draft
+      # per asset), so a cap of 4/hour rejected legitimate use. The Groq tier is
+      # the real ceiling; these only stop abuse.
       - key: MARKETPLACE_MAX_CONCURRENT
-        value: "1"
+        value: "3"
       - key: MARKETPLACE_RATE_LIMIT_MAX
-        value: "4"
+        value: "20"
       # Matches the live dashboard. Keep in step: a redeploy from this
       # blueprint overwrites the dashboard value and would silently
       # switch the x402 paywall off.

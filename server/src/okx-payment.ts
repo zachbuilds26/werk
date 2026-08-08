@@ -92,28 +92,66 @@ export function buildWerkPaymentListing(recipient: string | null, price: string 
   return buildListing(ready, recipient, price);
 }
 
-export function buildWerkPaymentRoutes(recipient: string, price: string = WERK_PAYMENT_DEFAULT_PRICE): RoutesConfig {
+/**
+ * What a buyer has to supply before the work can run.
+ *
+ * The x402 replay fetches the resource URL and forwards nothing else, so the
+ * request text can only travel as a query parameter on that URL. Declaring the
+ * fields here is what lets the buyer's client discover that: it reads this from
+ * the 402 body, prompts for the values, and appends them itself. Without the
+ * declaration the buyer would have to know to hand-build the URL.
+ */
+export const WERK_INPUT_FIELDS = [
+  {
+    name: "request",
+    type: "string",
+    required: true,
+    description:
+      "What you need in plain language, for example: a client proposal for a website redesign. Up to 6000 characters.",
+  },
+  {
+    name: "operation",
+    type: "string",
+    required: false,
+    description: 'Leave empty for a package plan. Use "draft" only when rendering one asset from a plan you already have.',
+  },
+] as const;
+
+/** The 402 body. Carries the input declaration the buyer's client reads. */
+export function werkUnpaidResponseBody(): Record<string, unknown> {
   return {
-    [WERK_PAYMENT_ROUTE]: {
-      accepts: {
-        scheme: "exact",
-        network: OKX_PAYMENT_NETWORK,
-        payTo: recipient,
-        price: `$${price}`,
-      },
-      description: WERK_PAYMENT_DESCRIPTION,
-      mimeType: "application/json",
+    inputRequired: true,
+    inputSchema: {
+      type: "object",
+      required: ["request"],
+      properties: Object.fromEntries(
+        WERK_INPUT_FIELDS.map((field) => [field.name, { type: field.type, description: field.description }]),
+      ),
     },
-    [WERK_PAYMENT_DISCOVERY_ROUTE]: {
-      accepts: {
-        scheme: "exact",
-        network: OKX_PAYMENT_NETWORK,
-        payTo: recipient,
-        price: `$${price}`,
-      },
-      description: WERK_PAYMENT_DESCRIPTION,
-      mimeType: "application/json",
+    fields: WERK_INPUT_FIELDS.map((field) => ({ ...field })),
+    description: WERK_PAYMENT_DESCRIPTION,
+  };
+}
+
+export function buildWerkPaymentRoutes(recipient: string, price: string = WERK_PAYMENT_DEFAULT_PRICE): RoutesConfig {
+  const route = {
+    accepts: {
+      scheme: "exact" as const,
+      network: OKX_PAYMENT_NETWORK,
+      payTo: recipient,
+      price: `$${price}`,
     },
+    description: WERK_PAYMENT_DESCRIPTION,
+    mimeType: "application/json" as const,
+    // Buyers cannot guess that the request rides on the URL; this tells them.
+    unpaidResponseBody: () => ({
+      contentType: "application/json",
+      body: werkUnpaidResponseBody(),
+    }),
+  };
+  return {
+    [WERK_PAYMENT_ROUTE]: route,
+    [WERK_PAYMENT_DISCOVERY_ROUTE]: route,
   };
 }
 
