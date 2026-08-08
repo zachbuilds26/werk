@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import express from "express";
 import type { AddressInfo } from "node:net";
-import { createRateLimiter } from "./rate-limit.js";
+import { createRateLimiter, isA2APath } from "./rate-limit.js";
 import { keepAliveUrl, startKeepAlive } from "./keepalive.js";
 
 async function withServer(app: express.Express, run: (baseUrl: string) => Promise<void>): Promise<void> {
@@ -90,4 +90,38 @@ test("keeps the keepalive off locally and when explicitly disabled", () => {
   assert.equal(on.enabled, true);
   assert.equal(on.url, "https://werk.example/api/health");
   on.stop();
+});
+
+// The agent gate carries a wildcard CORS header and the agent concurrency cap.
+// If it ever matches /api again, the browser app inherits an agent-sized
+// concurrency limit and every origin can spend the quota.
+test("agent middleware matches only the A2A surface", () => {
+  for (const path of [
+    "/message:send",
+    "/message:stream",
+    "/werk/message:send",
+    "/werk/message:stream",
+    "/tasks/abc",
+    "/werk/tasks/abc",
+    "/tasks/abc/artifacts/def",
+    "/werk/tasks/abc/artifacts/def",
+  ]) {
+    assert.equal(isA2APath(path), true, `expected an agent path: ${path}`);
+  }
+
+  for (const path of [
+    "/api/plan",
+    "/api/generate",
+    "/api/render",
+    "/api/health",
+    "/a2mcp/werk",
+    "/a2mcp/werk/tools/call",
+    "/.well-known/agent-card.json",
+    "/",
+    "/workspace",
+    "/docs",
+    "/assets/index.js",
+  ]) {
+    assert.equal(isA2APath(path), false, `expected a non-agent path: ${path}`);
+  }
 });

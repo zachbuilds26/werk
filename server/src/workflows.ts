@@ -1,4 +1,5 @@
 import { groqJson } from "./groq.js";
+import { MAX_TABLE_COLUMNS, MAX_TABLE_ROWS } from "./asset-specs.js";
 import { DRAFT_SYSTEM, PLAN_SYSTEM } from "./prompts.js";
 import { qualityErrors, validateDraftQuality } from "./quality.js";
 import { MAX_PLAN_ASSETS, assetDraftSchema } from "./schemas.js";
@@ -70,7 +71,7 @@ export function coercePlan(raw: unknown): PackagePlan {
   };
 }
 
-function coerceDraft(raw: unknown, kind: AssetKind, title: string): AssetDraft {
+export function coerceDraft(raw: unknown, kind: AssetKind, title: string): AssetDraft {
   const obj = (raw ?? {}) as Record<string, unknown>;
   const draft: AssetDraft = { kind, title, blurb: asString(obj.blurb, 700) };
   switch (kind) {
@@ -90,8 +91,15 @@ function coerceDraft(raw: unknown, kind: AssetKind, title: string): AssetDraft {
     }).filter((section) => section.heading || section.body.length).slice(0, 10); break;
     case "sheet": {
       const table = (obj.table ?? {}) as Record<string, unknown>;
-      const columns = textList(table.columns, 10, 120);
-      const rows = Array.isArray(table.rows) ? table.rows.map((row) => Array.isArray(row) ? row.map((cell) => asString(cell, 180)) : []).slice(0, 24) : [];
+      const columns = textList(table.columns, MAX_TABLE_COLUMNS, 120);
+      // Columns are already capped, so each row is trimmed to the same width.
+      // Leaving rows wider than the header made the draft fail validation as
+      // malformed, which cost a retry call instead of just trimming here.
+      const rows = Array.isArray(table.rows)
+        ? table.rows
+            .map((row) => (Array.isArray(row) ? row.map((cell) => asString(cell, 180)).slice(0, columns.length) : []))
+            .slice(0, MAX_TABLE_ROWS)
+        : [];
       if (columns.length) draft.table = { columns, rows };
       break;
     }

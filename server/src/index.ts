@@ -17,7 +17,7 @@ import { buildWorkspaceRequest } from "./workspace.js";
 import { createDraft, createPlan, withOpenInputs } from "./workflows.js";
 import type { ClarifyQuestion, ClarifyResult } from "./types.js";
 import { createWerkPaymentIntegration } from "./okx-payment.js";
-import { createRateLimiter, positiveInteger } from "./rate-limit.js";
+import { createRateLimiter, isA2APath, positiveInteger } from "./rate-limit.js";
 import { startKeepAlive } from "./keepalive.js";
 
 const PORT = Number(process.env.PORT) || 8787;
@@ -58,10 +58,21 @@ app.use(express.json({ limit: "1mb" }));
 // it is registered before any limiter and stays free.
 app.get("/api/health", (_req, res) => res.json({ ok: true, groq: hasGroqKey(), payment: werkPayment.health }));
 
+// The A2A routes do not share a mount prefix, so the agent middleware is
+// selected by path shape (see isA2APath). Passing it to a bare app.use() would
+// run it for every request, which would put the agent concurrency cap and a
+// wildcard CORS header on /api and the static site too.
+const agentCors = cors();
+const meterAgent = postOnly(agentLimiter);
+const agentGate: express.RequestHandler = (req, res, next) => {
+  if (!isA2APath(req.path)) return next();
+  agentCors(req, res, (error?: unknown) => (error ? next(error) : meterAgent(req, res, next)));
+};
+
 // A2A settles through the marketplace task escrow rather than an x402 challenge
 // on this endpoint, so it stays outside the payment middleware on purpose. It is
 // rate limited instead, because it runs the full model pipeline.
-app.use(cors(), postOnly(agentLimiter), createA2ARouter());
+app.use(agentGate, createA2ARouter());
 app.use(werkPayment.middleware);
 app.use(PROVIDER_PATH, createMarketplaceRouter(undefined, undefined, marketplacePayment));
 app.use("/api", postOnly(apiLimiter));

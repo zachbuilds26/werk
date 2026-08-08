@@ -14,11 +14,20 @@ const DEFAULT_MAX_CONCURRENT = 4;
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_TRACKED_CALLERS = 10_000;
 
+// The A2A routes sit at the server root and share no mount prefix
+// (/message:send, /<tenant>/message:send, /tasks/<id>/artifacts/<id>), so agent
+// middleware has to be selected by path shape. Without this the agent limiter
+// and its wildcard CORS header would apply to /api and the static site as well.
+const A2A_PATH = /^\/(?:[^/]+\/)?(?:message:(?:send|stream)|tasks(?:\/|$))/;
+
+export function isA2APath(path: string): boolean {
+  return A2A_PATH.test(path);
+}
+
 export type RateLimitOptions = {
   windowMs?: number;
   max?: number;
-  maxConcurrent?: number;
-  /** Sent as the error body. Kept generic so it suits JSON and SSE routes. */
+  maxConcurrent?: number;  /** Sent as the error body. Kept generic so it suits JSON and SSE routes. */
   message?: string;
 };
 

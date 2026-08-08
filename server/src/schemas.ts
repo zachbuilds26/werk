@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_TABLE_COLUMNS, MAX_TABLE_ROWS } from "./asset-specs.js";
 import { ASSET_KINDS } from "./types.js";
 
 const text = (max: number) => z.string().trim().min(1).max(max);
@@ -45,10 +46,17 @@ const slideSchema = z.object({
   eyebrow: text(80), title: text(220), bullets: z.array(text(500)).min(1).max(6),
 }).strict();
 const documentSectionSchema = z.object({
-  heading: text(220), body: z.array(text(1400)).min(1).max(3),
+  // Six matches what coerceDraft assembles. A lower ceiling here rejected the
+  // whole draft as malformed whenever the model wrote a fourth paragraph, which
+  // cost a retry call and could fail the asset outright.
+  heading: text(220), body: z.array(text(1400)).min(1).max(6),
 }).strict();
 const tableSchema = z.object({
-  columns: z.array(text(120)).min(1).max(10), rows: z.array(z.array(text(180)).min(1).max(10)).min(1).max(24),
+  // Row cap matches the quality gate's ceiling (ASSET_SPECS.sheet.maxItems), so
+  // an oversized table is trimmed at coercion rather than surviving validation
+  // only to fail the gate and burn a retry call.
+  columns: z.array(text(120)).min(1).max(MAX_TABLE_COLUMNS),
+  rows: z.array(z.array(text(180)).min(1).max(MAX_TABLE_COLUMNS)).min(1).max(MAX_TABLE_ROWS),
 }).strict();
 const agendaSchema = z.object({ time: text(80), topic: text(240), owner: text(140) }).strict();
 const actionSchema = z.object({ task: text(300), owner: text(140), due: text(120) }).strict();
