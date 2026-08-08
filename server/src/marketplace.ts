@@ -76,10 +76,49 @@ export function createMarketplaceRouter(
   const rateLimits = new Map<string, RateLimitEntry>();
   let activeRequests = 0;
 
+  // Records the shape of the last call that reached the paid resource. A buyer's
+  // request only arrives if the x402 client forwards it, and that is invisible
+  // from outside — without this, diagnosing a wrong-shaped paid call costs a
+  // real payment per attempt. Shape only: no header values, no payment proof.
+  let lastInvocation: {
+    at: string;
+    method: string;
+    originalUrl: string;
+    queryKeys: string[];
+    query: Record<string, string>;
+    bodyKeys: string[];
+    hasBody: boolean;
+    contentType: string | null;
+  } | null = null;
+
+  const recordInvocation = (req: express.Request): void => {
+    const query: Record<string, string> = {};
+    for (const [key, value] of Object.entries(req.query as Record<string, unknown>)) {
+      query[key] = typeof value === "string" ? value.slice(0, 300) : JSON.stringify(value).slice(0, 300);
+    }
+    const body = (req.body ?? null) as Record<string, unknown> | null;
+    lastInvocation = {
+      at: new Date().toISOString(),
+      method: req.method,
+      originalUrl: req.originalUrl.slice(0, 400),
+      queryKeys: Object.keys(query),
+      query,
+      bodyKeys: body && typeof body === "object" ? Object.keys(body) : [],
+      hasBody: Boolean(body && typeof body === "object" && Object.keys(body).length > 0),
+      contentType: req.get("content-type") ?? null,
+    };
+  };
+
   router.use((_req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     next();
+  });
+
+  // Free. Reports how the last paid call arrived so a failed purchase can be
+  // diagnosed without paying again.
+  router.get("/last-invocation", (_req, res) => {
+    res.json({ lastInvocation });
   });
 
   // Free service metadata. The paid resource itself answers 402 on GET and POST
@@ -246,8 +285,8 @@ export function createMarketplaceRouter(
     }
   };
 
-  router.post("/", (req, res) => runInvocation(req.body, req, res));
-  router.get("/", (req, res) => runInvocation(invocationFromQuery(req.query as Record<string, unknown>), req, res));
+  router.post("/", (req, res) => { recordInvocation(req); return runInvocation(req.body, req, res); });
+  router.get("/", (req, res) => { recordInvocation(req); return runInvocation(invocationFromQuery(req.query as Record<string, unknown>), req, res); });
 
   // Nothing under the provider mount may fall through to the SPA catch-all: a
   // paying caller must always receive JSON, never index.html.
