@@ -3,22 +3,27 @@ import express from "express";
 import { marketplaceInvocationSchema } from "./schemas.js";
 import { createContinuationToken, readContinuationToken } from "./marketplace-token.js";
 import { buildArtifactDescriptor, renderFileForDraft } from "./artifacts.js";
+import { buildPackageZip, type PackageEntry } from "./package-build.js";
+import { PackageStore, type StoredFile } from "./package-store.js";
 import { createDraft, createPlan } from "./workflows.js";
-import type { WorkspaceContext } from "./types.js";
+import type { AssetKind } from "./types.js";
 import type { WerkPaymentListing } from "./okx-payment.js";
 import { WERK_PAYMENT_DESCRIPTION } from "./okx-payment.js";
 
 const PROVIDER_PATH = "/a2mcp/werk";
-const DEFAULT_WORKSPACE: WorkspaceContext = {
-  organizationName: "Marketplace request",
-  organizationDescription: "No organization context was supplied.",
-  workspacePurpose: "Create useful professional work outputs from the supplied request.",
-};
+const FILES_SEGMENT = "files";
+const PACKAGE_FILE_ID = "package.zip";
 
 type MarketplaceConfig = {
   enabled: boolean;
   tokenSecret: string;
   timeoutMs: number;
+  packageTimeoutMs: number;
+  /** Time held back so the zip, the base64 encode and the response still fit after the last draft. */
+  packageReserveMs: number;
+  /** Below this much remaining budget, starting another asset only risks losing it mid-flight. */
+  minAssetMs: number;
+  inlineMaxBytes: number;
   maxConcurrent: number;
   rateLimitWindowMs: number;
   rateLimitMax: number;
@@ -31,6 +36,18 @@ type MarketplaceOperations = {
 
 type RateLimitEntry = { count: number; resetAt: number };
 
+type PackageAssetResult = {
+  id: string;
+  title: string;
+  kind: AssetKind;
+  status: "ready" | "skipped";
+  format?: string;
+  filename?: string;
+  byteLength?: number;
+  url?: string;
+  reason?: string;
+};
+
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -41,9 +58,15 @@ export function marketplaceConfig(env = process.env): MarketplaceConfig {
     enabled: env.MARKETPLACE_PROVIDER_ENABLED === "true",
     tokenSecret: env.MARKETPLACE_TOKEN_SECRET ?? "",
     timeoutMs: positiveInteger(env.MARKETPLACE_REQUEST_TIMEOUT_MS, 55000),
+    // A whole package is one plan plus a draft per asset, so it needs minutes
+    // rather than seconds. Kept inside the 300s the x402 offer advertises.
+    packageTimeoutMs: positiveInteger(env.MARKETPLACE_PACKAGE_TIMEOUT_MS, 240000),
+    packageReserveMs: positiveInteger(env.MARKETPLACE_PACKAGE_RESERVE_MS, 15000),
+    minAssetMs: positiveInteger(env.MARKETPLACE_MIN_ASSET_MS, 35000),
+    inlineMaxBytes: positiveInteger(env.MARKETPLACE_INLINE_MAX_BYTES, 6_000_000),
     maxConcurrent: positiveInteger(env.MARKETPLACE_MAX_CONCURRENT, 1),
     rateLimitWindowMs: positiveInteger(env.MARKETPLACE_RATE_LIMIT_WINDOW_MS, 60 * 60 * 1000),
-    rateLimitMax: positiveInteger(env.MARKETPLACE_RATE_LIMIT_MAX, 4),
+    rateLimitMax: positiveInteger(env.MARKETPLACE_RATE_LIMIT_MAX, 6),
   };
 }
 
@@ -55,10 +78,6 @@ function callerKey(req: express.Request): string {
   return req.ip || req.socket.remoteAddress || "unknown";
 }
 
-function defaultWorkspace(context?: Partial<WorkspaceContext>): WorkspaceContext {
-  return { ...DEFAULT_WORKSPACE, ...context };
-}
-
 function marketplaceDiscoveryReady(config: MarketplaceConfig): boolean {
   return config.enabled;
 }
@@ -67,10 +86,15 @@ function marketplaceOperationReady(config: MarketplaceConfig, payment?: WerkPaym
   return config.enabled && config.tokenSecret.length >= 32 && (payment ? payment.ready : true);
 }
 
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 export function createMarketplaceRouter(
   config = marketplaceConfig(),
   operations: MarketplaceOperations = { createPlan, createDraft },
   payment: WerkPaymentListing | null = null,
+  store: PackageStore = new PackageStore(),
 ): express.Router {
   const router = express.Router();
   const rateLimits = new Map<string, RateLimitEntry>();
@@ -95,7 +119,8 @@ export function createMarketplaceRouter(
         version: "1.0",
         endpoint: PROVIDER_PATH,
         pricing: "free",
-        operations: ["plan", "draft"],
+        operations: ["package", "plan", "draft"],
+        defaultOperation: "package",
       });
     }
     return res.json({
@@ -111,7 +136,8 @@ export function createMarketplaceRouter(
         payTo: payment.payTo,
         mimeType: payment.mimeType,
       },
-      operations: ["plan", "draft"],
+      operations: ["package", "plan", "draft"],
+      defaultOperation: "package",
     });
   });
 
@@ -160,7 +186,7 @@ export function createMarketplaceRouter(
       }
     }
 
-    const operation = pick("operation", "op", "mode") ?? "plan";
+    const operation = pick("operation", "op", "mode");
     if (operation === "draft") {
       return {
         operation,
@@ -183,17 +209,10 @@ export function createMarketplaceRouter(
     }
 
     if (!request) return undefined;
-    const invocation: Record<string, unknown> = { operation: "plan", request };
-
-    const workspaceContext = pick("workspaceContext", "workspace_context", "context");
-    if (workspaceContext) {
-      try {
-        invocation.workspaceContext = JSON.parse(workspaceContext);
-      } catch {
-        // A malformed context is dropped rather than failing the whole call;
-        // defaultWorkspace() supplies a usable fallback.
-      }
-    }
+    // Anything that is not explicitly the old two-step flow buys the whole
+    // package. A bare ?request=... is the common case and must not return a plan
+    // the buyer then has to pay again to act on.
+    const invocation: Record<string, unknown> = { operation: operation === "plan" ? "plan" : "package", request };
 
     const openInputs = pick("openInputs", "open_inputs");
     if (openInputs) {
@@ -205,6 +224,11 @@ export function createMarketplaceRouter(
       }
     }
     return invocation;
+  };
+
+  const fileUrl = (req: express.Request, packageId: string, fileId: string): string => {
+    const base = `${req.protocol}://${req.get("host") ?? "werk-rou3.onrender.com"}`;
+    return `${base}${req.baseUrl || PROVIDER_PATH}/${FILES_SEGMENT}/${packageId}/${fileId}`;
   };
 
   const runInvocation = async (rawInvocation: unknown, req: express.Request, res: express.Response): Promise<void> => {
@@ -224,8 +248,8 @@ export function createMarketplaceRouter(
       return providerError(res, requestId, 429, "RATE_LIMITED", "Too many requests. Try again later.");
     }
     if (activeRequests >= config.maxConcurrent) {
-      res.setHeader("Retry-After", "30");
-      return providerError(res, requestId, 429, "BUSY", "The provider is busy. Try again shortly.");
+      res.setHeader("Retry-After", "60");
+      return providerError(res, requestId, 429, "BUSY", "The provider is finishing another package. Try again shortly.");
     }
     const parsed = marketplaceInvocationSchema.safeParse(rawInvocation);
     if (!parsed.success) {
@@ -249,7 +273,7 @@ export function createMarketplaceRouter(
           },
         ],
         example: `${base}?request=${encodeURIComponent("Create a client proposal for a website redesign")}`,
-        howTo: "When creating the task, pass that full URL (with your own request text) as the endpoint.",
+        howTo: "When creating the task, pass that full URL (with your own request text) as the endpoint. One call returns the plan and every finished file.",
       });
       return;
     }
@@ -258,25 +282,122 @@ export function createMarketplaceRouter(
     // not billed quota for a malformed body that never reaches the model.
     rateLimits.set(key, { count: (entry?.count ?? 0) + 1, resetAt: entry?.resetAt ?? now + config.rateLimitWindowMs });
 
+    const invocation = parsed.data;
+    const budgetMs = invocation.operation === "package" ? config.packageTimeoutMs : config.timeoutMs;
+    const startedAt = Date.now();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+    const timeout = setTimeout(() => controller.abort(), budgetMs);
+    // A client that hung up is different from a budget that ran out: there is no
+    // one left to send partial work to, so the package branch stops rather than
+    // spending the remaining time rendering into a closed socket.
+    let clientGone = false;
     const abort = () => controller.abort();
+    const onClose = () => {
+      clientGone = true;
+      abort();
+    };
     // "close" on the response covers a client that hung up mid-request; the
     // request's "aborted" event is deprecated.
-    res.once("close", abort);
+    res.once("close", onClose);
     activeRequests += 1;
 
     try {
-      if (parsed.data.operation === "plan") {
-        const workspaceContext = defaultWorkspace(parsed.data.workspaceContext);
-        const openInputs = parsed.data.openInputs ?? [];
-        const plan = await operations.createPlan({ request: parsed.data.request, workspaceContext, openInputs, signal: controller.signal });
-        const continuationToken = createContinuationToken(config.tokenSecret, { request: parsed.data.request, workspaceContext, openInputs, plan });
+      if (invocation.operation === "package") {
+        const openInputs = invocation.openInputs ?? [];
+        const plan = await operations.createPlan({ request: invocation.request, openInputs, signal: controller.signal });
+
+        const deadline = startedAt + budgetMs - config.packageReserveMs;
+        const entries: PackageEntry[] = [];
+        const files = new Map<string, StoredFile>();
+        const results: PackageAssetResult[] = [];
+        const fileIds: string[] = [];
+
+        for (const asset of plan.assets) {
+          if (clientGone) return;
+          if (deadline - Date.now() < config.minAssetMs) {
+            results.push({
+              id: asset.id, title: asset.title, kind: asset.kind, status: "skipped",
+              reason: "Not enough time left in this request to write it. Ask again for this one output on its own.",
+            });
+            continue;
+          }
+          try {
+            const draft = await operations.createDraft({
+              request: invocation.request,
+              openInputs,
+              assetPlan: asset,
+              brief: plan.brief,
+              signal: controller.signal,
+            });
+            const rendered = await renderFileForDraft(draft);
+            const fileId = crypto.randomUUID();
+            files.set(fileId, { bytes: rendered.bytes, mime: rendered.mime, filename: rendered.filename });
+            fileIds.push(fileId);
+            entries.push({ title: draft.title, ext: rendered.ext, bytes: rendered.bytes, gaps: draft.metadata?.gaps });
+            results.push({
+              id: asset.id, title: draft.title, kind: asset.kind, status: "ready",
+              format: rendered.ext, filename: rendered.filename, byteLength: rendered.bytes.length,
+            });
+          } catch (error) {
+            // One asset failing is not the buyer's problem to pay for twice: the
+            // rest of the package still ships and the gap is named.
+            results.push({
+              id: asset.id, title: asset.title, kind: asset.kind, status: "skipped",
+              reason: controller.signal.aborted ? "The time budget for this request ran out before it was finished." : errorMessage(error, "That output could not be written."),
+            });
+          }
+        }
+
+        if (clientGone) return;
+        // Only a package with nothing in it is a failure. Anything else ships.
+        if (!entries.length) {
+          return providerError(res, requestId, 503, "GENERATION_UNAVAILABLE", "Werk could not produce any of the outputs for this request. You have not been charged for a delivery.");
+        }
+
+        const zip = await buildPackageZip(plan.packageName, entries);
+        files.set(PACKAGE_FILE_ID, { bytes: zip.bytes, mime: "application/zip", filename: zip.filename });
+        const { packageId, expiresAt } = store.save(files);
+
+        let readyIndex = 0;
+        for (const result of results) {
+          if (result.status === "ready") result.url = fileUrl(req, packageId, fileIds[readyIndex++]);
+        }
+
+        const inline = zip.bytes.length <= config.inlineMaxBytes;
+        res.status(200).json({
+          requestId,
+          result: {
+            operation: "package",
+            plan,
+            assets: results,
+            package: {
+              filename: zip.filename,
+              media_type: "application/zip",
+              byteLength: zip.bytes.length,
+              url: fileUrl(req, packageId, PACKAGE_FILE_ID),
+              // The zip travels inline so the buyer's saved response is the
+              // durable copy; the links are convenience and expire with the store.
+              ...(inline ? { raw: zip.bytes.toString("base64") } : {}),
+            },
+            openInputs: zip.gaps,
+            delivered: entries.length,
+            skipped: results.length - entries.length,
+            expiresAt,
+            ...(inline ? {} : { note: "The package was too large to inline. Download it from the url before it expires." }),
+          },
+        });
+        return;
+      }
+
+      if (invocation.operation === "plan") {
+        const openInputs = invocation.openInputs ?? [];
+        const plan = await operations.createPlan({ request: invocation.request, openInputs, signal: controller.signal });
+        const continuationToken = createContinuationToken(config.tokenSecret, { request: invocation.request, openInputs, plan });
         res.status(200).json({ requestId, result: { operation: "plan", plan, continuationToken } });
         return;
       }
 
-      const draftRequest = parsed.data;
+      const draftRequest = invocation;
       let continuation: ReturnType<typeof readContinuationToken>;
       try {
         continuation = readContinuationToken(config.tokenSecret, draftRequest.continuationToken);
@@ -287,7 +408,6 @@ export function createMarketplaceRouter(
       if (!assetPlan) return providerError(res, requestId, 400, "INVALID_ASSET", "The selected asset is not in the approved plan.");
       const draft = await operations.createDraft({
         request: continuation.request,
-        workspaceContext: continuation.workspaceContext,
         openInputs: continuation.openInputs,
         assetPlan,
         brief: continuation.plan.brief,
@@ -298,12 +418,13 @@ export function createMarketplaceRouter(
       res.status(200).json({ requestId, result: { operation: "draft", draft, artifact } });
       return;
     } catch (error) {
+      if (clientGone) return;
       if (controller.signal.aborted) return providerError(res, requestId, 504, "TIMED_OUT", "The provider could not finish in time. Try again later.");
       return providerError(res, requestId, 503, "GENERATION_UNAVAILABLE", "The provider is temporarily unavailable. Try again later.");
     } finally {
       activeRequests -= 1;
       clearTimeout(timeout);
-      res.off("close", abort);
+      res.off("close", onClose);
     }
   };
 
@@ -321,4 +442,4 @@ export function createMarketplaceRouter(
   return router;
 }
 
-export { PROVIDER_PATH, WERK_PAYMENT_DESCRIPTION };
+export { PROVIDER_PATH, FILES_SEGMENT, PACKAGE_FILE_ID, WERK_PAYMENT_DESCRIPTION };

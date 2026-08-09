@@ -1,14 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createContinuationToken, readContinuationToken } from "./marketplace-token.js";
-import type { PackagePlan, WorkspaceContext } from "./types.js";
+import type { PackagePlan } from "./types.js";
 
 const secret = "marketplace-test-secret-1234567890";
-const workspace: WorkspaceContext = {
-  organizationName: "Northstar Studio",
-  organizationDescription: "A small product design practice",
-  workspacePurpose: "Create client-ready project proposals",
-};
 const plan: PackagePlan = {
   packageName: "Website proposal",
   packageTitle: "Website redesign proposal",
@@ -41,7 +36,6 @@ const plan: PackagePlan = {
 function createToken(now = Date.now()): string {
   return createContinuationToken(secret, {
     request: "Prepare a proposal for the website redesign.",
-    workspaceContext: workspace,
     openInputs: ["Needs your input: launch date"],
     plan,
   }, now);
@@ -51,9 +45,9 @@ test("encrypts and restores an approved marketplace plan", () => {
   const token = createToken();
   const restored = readContinuationToken(secret, token);
 
-  assert.equal(token.includes("Northstar Studio"), false);
+  assert.equal(token.includes("Website redesign proposal"), false);
   assert.equal(restored.request, "Prepare a proposal for the website redesign.");
-  assert.deepEqual(restored.workspaceContext, workspace);
+  assert.deepEqual(restored.openInputs, ["Needs your input: launch date"]);
   assert.deepEqual(restored.plan, plan);
 });
 

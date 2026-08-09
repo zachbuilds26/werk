@@ -13,14 +13,19 @@ services:
         value: "true"
       - key: MARKETPLACE_TOKEN_SECRET
         sync: false
-      # Sized so a reviewer testing alongside normal traffic is not turned away.
-      # One buyer needs several calls for a full package (one plan, then a draft
-      # per asset), so a cap of 4/hour rejected legitimate use. The Groq tier is
-      # the real ceiling; these only stop abuse.
+      # One paid call is now the whole package: a plan plus a draft per asset,
+      # which is five to nine model calls on a single-core free instance. Two of
+      # those running at once would starve each other and the Groq tier, so the
+      # provider takes one at a time and a caller gets six packages an hour.
       - key: MARKETPLACE_MAX_CONCURRENT
-        value: "3"
+        value: "1"
       - key: MARKETPLACE_RATE_LIMIT_MAX
-        value: "20"
+        value: "6"
+      # A whole package needs minutes, not the 55s a single step needed. Kept
+      # under the 300s the x402 offer advertises so the buyer's client does not
+      # give up before the files arrive.
+      - key: MARKETPLACE_PACKAGE_TIMEOUT_MS
+        value: "240000"
       # Matches the live dashboard. Keep in step: a redeploy from this
       # blueprint overwrites the dashboard value and would silently
       # switch the x402 paywall off.

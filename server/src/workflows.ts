@@ -3,9 +3,8 @@ import { MAX_TABLE_COLUMNS, MAX_TABLE_ROWS } from "./asset-specs.js";
 import { DRAFT_SYSTEM, PLAN_SYSTEM } from "./prompts.js";
 import { qualityErrors, validateDraftQuality } from "./quality.js";
 import { MAX_PLAN_ASSETS, assetDraftSchema } from "./schemas.js";
-import { buildWorkspaceRequest } from "./workspace.js";
 import type {
-  AssetDraft, AssetKind, AssetPlan, PackageBrief, PackagePlan, QualityIssue, WorkspaceContext,
+  AssetDraft, AssetKind, AssetPlan, PackageBrief, PackagePlan, QualityIssue,
 } from "./types.js";
 
 const MAX_TOKENS_PLAN = 1600;
@@ -137,14 +136,13 @@ function draftPrompt(request: string, asset: AssetPlan, brief: PackageBrief, ope
 
 export type PlanInput = {
   request: string;
-  workspaceContext: WorkspaceContext;
   openInputs?: string[];
   signal?: AbortSignal;
 };
 
-export async function createPlan({ request, workspaceContext, openInputs = [], signal }: PlanInput): Promise<PackagePlan> {
+export async function createPlan({ request, openInputs = [], signal }: PlanInput): Promise<PackagePlan> {
   const source = withOpenInputs(request, openInputs);
-  const raw = await groqJson(PLAN_SYSTEM, buildWorkspaceRequest(workspaceContext, source), MAX_TOKENS_PLAN, signal);
+  const raw = await groqJson(PLAN_SYSTEM, source, MAX_TOKENS_PLAN, signal);
   const plan = coercePlan(raw);
   plan.brief.openInputs = [...new Set([...plan.brief.openInputs, ...openInputs])];
   return plan;
@@ -158,7 +156,7 @@ export type DraftInput = PlanInput & {
   onStage?: (stage: "verifying" | "revising") => void;
 };
 
-export async function createDraft({ request, workspaceContext, assetPlan, brief, openInputs = [], revisionInstruction, previousDraft, onStage, signal }: DraftInput): Promise<AssetDraft> {
+export async function createDraft({ request, assetPlan, brief, openInputs = [], revisionInstruction, previousDraft, onStage, signal }: DraftInput): Promise<AssetDraft> {
   const revision = (previousDraft?.metadata?.revision ?? 0) + 1;
   const assess = (raw: unknown): { draft?: AssetDraft; issues: QualityIssue[] } => {
     try {
@@ -168,7 +166,7 @@ export async function createDraft({ request, workspaceContext, assetPlan, brief,
       return { issues: [{ code: "malformed-draft", message: "Return valid non-empty fields in the required JSON structure.", severity: "error" }] };
     }
   };
-  const source = buildWorkspaceRequest(workspaceContext, withOpenInputs(request, openInputs));
+  const source = withOpenInputs(request, openInputs);
   let candidate = assess(await groqJson(DRAFT_SYSTEM, draftPrompt(source, assetPlan, brief, openInputs, revisionInstruction, previousDraft), MAX_TOKENS_DRAFT, signal));
   if (qualityErrors(candidate.issues).length) {
     onStage?.("revising");

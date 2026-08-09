@@ -9,27 +9,25 @@ const textList = (maxItems: number, maxLength: number) => z.array(text(maxLength
 export const assetKindSchema = z.enum(ASSET_KINDS);
 export const renderFormatSchema = z.enum(["md", "pdf", "pptx", "xlsx"]);
 
-export const workspaceContextSchema = z.object({
-  organizationName: text(160),
-  organizationDescription: text(1200),
-  workspacePurpose: text(1200),
-  defaultAudience: optionalText(500),
-  toneAndConstraints: optionalText(1200),
-  additionalContext: optionalText(4000),
-}).strict();
-
 export const requestPayloadSchema = z.object({
   request: text(6000),
-  workspaceContext: workspaceContextSchema,
   openInputs: textList(12, 280).optional(),
 }).strict();
 
-const marketplaceWorkspaceContextSchema = workspaceContextSchema.partial().strict();
+// `package` is the whole product in one call: plan, draft everything, return the
+// files. `plan` and `draft` stay for buyers already holding a continuation token
+// from the old two-step flow.
+const marketplaceRequestFields = {
+  request: text(6000),
+  openInputs: textList(12, 280).optional(),
+};
+const marketplacePackageRequestSchema = z.object({
+  operation: z.literal("package"),
+  ...marketplaceRequestFields,
+}).strict();
 const marketplacePlanRequestSchema = z.object({
   operation: z.literal("plan"),
-  request: text(6000),
-  workspaceContext: marketplaceWorkspaceContextSchema.optional(),
-  openInputs: textList(12, 280).optional(),
+  ...marketplaceRequestFields,
 }).strict();
 const marketplaceDraftRequestSchema = z.object({
   operation: z.literal("draft"),
@@ -38,6 +36,7 @@ const marketplaceDraftRequestSchema = z.object({
 }).strict();
 
 export const marketplaceInvocationSchema = z.discriminatedUnion("operation", [
+  marketplacePackageRequestSchema,
   marketplacePlanRequestSchema,
   marketplaceDraftRequestSchema,
 ]);

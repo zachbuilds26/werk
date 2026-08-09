@@ -18,11 +18,6 @@ type SupportedResponse = ReturnType<FacilitatorClient["getSupported"]> extends P
 type VerifyResponse = Awaited<ReturnType<FacilitatorClient["verify"]>>;
 type SettleResponse = Awaited<ReturnType<FacilitatorClient["settle"]>>;
 
-const workspace = {
-  organizationName: "Buyer QA",
-  organizationDescription: "A test workspace",
-  workspacePurpose: "Validate generated work outputs",
-};
 const plan: PackagePlan = {
   packageName: "Launch package",
   packageTitle: "Product launch package",
@@ -155,7 +150,6 @@ test("returns a 402 challenge with the X Layer USDT0 requirements", async () => 
     const response = await post(baseUrl, {
       operation: "plan",
       request: "Prepare a product launch package.",
-      workspaceContext: workspace,
       openInputs: ["Needs your input: launch date"],
     });
     assert.equal(response.status, 402);
@@ -183,7 +177,6 @@ test("accepts a valid x402 payment and reaches the marketplace handler", async (
     const unauthenticated = await post(baseUrl, {
       operation: "plan",
       request: "Prepare a product launch package.",
-      workspaceContext: workspace,
     });
     assert.equal(unauthenticated.status, 402);
     const paymentRequired = httpClient.getPaymentRequiredResponse((name) => unauthenticated.headers.get(name));
@@ -193,7 +186,6 @@ test("accepts a valid x402 payment and reaches the marketplace handler", async (
     const paid = await post(baseUrl, {
       operation: "plan",
       request: "Prepare a product launch package.",
-      workspaceContext: workspace,
       openInputs: ["Needs your input: launch date"],
     }, headers);
     assert.equal(paid.status, 200);
@@ -214,7 +206,6 @@ test("rejects tampered payment payloads", async () => {
     const unauthenticated = await post(baseUrl, {
       operation: "plan",
       request: "Prepare a product launch package.",
-      workspaceContext: workspace,
     });
     assert.equal(unauthenticated.status, 402);
     const paymentRequired = httpClient.getPaymentRequiredResponse((name) => unauthenticated.headers.get(name));
@@ -234,7 +225,6 @@ test("rejects tampered payment payloads", async () => {
       const response = await post(baseUrl, {
         operation: "plan",
         request: "Prepare a product launch package.",
-        workspaceContext: workspace,
       }, httpClient.encodePaymentSignatureHeader(tampered));
       assert.equal(response.status, 402);
     }
@@ -250,7 +240,6 @@ test("does not settle when the application fails after payment verification", as
     const unauthenticated = await post(baseUrl, {
       operation: "plan",
       request: "Prepare a product launch package.",
-      workspaceContext: workspace,
     });
     assert.equal(unauthenticated.status, 402);
     const paymentRequired = httpClient.getPaymentRequiredResponse((name) => unauthenticated.headers.get(name));
@@ -259,7 +248,6 @@ test("does not settle when the application fails after payment verification", as
     const paid = await post(baseUrl, {
       operation: "plan",
       request: "Prepare a product launch package.",
-      workspaceContext: workspace,
     }, httpClient.encodePaymentSignatureHeader(paymentPayload));
     assert.equal(paid.status, 503);
     assert.equal(counts.verify > 0, true);

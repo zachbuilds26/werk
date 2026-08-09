@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
-import { packagePlanSchema, workspaceContextSchema } from "./schemas.js";
-import type { PackagePlan, WorkspaceContext } from "./types.js";
+import { packagePlanSchema } from "./schemas.js";
+import type { PackagePlan } from "./types.js";
 
 const TOKEN_VERSION = 1;
 const TOKEN_TTL_MS = 15 * 60 * 1000;
@@ -10,7 +10,6 @@ type ContinuationPayload = {
   issuedAt: number;
   expiresAt: number;
   request: string;
-  workspaceContext: WorkspaceContext;
   openInputs: string[];
   plan: PackagePlan;
 };
@@ -42,16 +41,14 @@ function parsePayload(raw: unknown): ContinuationPayload {
   if (value.version !== TOKEN_VERSION || typeof value.issuedAt !== "number" || typeof value.expiresAt !== "number" || typeof value.request !== "string" || !Array.isArray(value.openInputs)) {
     throw new Error("Invalid continuation token");
   }
-  const workspace = workspaceContextSchema.safeParse(value.workspaceContext);
   const plan = packagePlanSchema.safeParse(value.plan);
-  if (!workspace.success || !plan.success || value.openInputs.some((input) => typeof input !== "string")) throw new Error("Invalid continuation token");
+  if (!plan.success || value.openInputs.some((input) => typeof input !== "string")) throw new Error("Invalid continuation token");
   if (value.expiresAt <= Date.now()) throw new Error("Continuation token expired");
   return {
     version: TOKEN_VERSION,
     issuedAt: value.issuedAt,
     expiresAt: value.expiresAt,
     request: value.request,
-    workspaceContext: workspace.data,
     openInputs: value.openInputs,
     plan: plan.data,
   };
@@ -59,7 +56,7 @@ function parsePayload(raw: unknown): ContinuationPayload {
 
 export function createContinuationToken(
   secret: string,
-  input: Pick<ContinuationPayload, "request" | "workspaceContext" | "openInputs" | "plan">,
+  input: Pick<ContinuationPayload, "request" | "openInputs" | "plan">,
   now = Date.now(),
 ): string {
   if (secret.length < 32) throw new Error("Marketplace token secret is not configured");

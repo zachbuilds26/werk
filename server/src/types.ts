@@ -1,5 +1,5 @@
-// Shared domain shapes for the Werk API. The model may propose a package, but
-// user-provided context and open inputs remain visible through every draft.
+// Shared domain shapes for the Werk API. One plain-language request goes in; the
+// model proposes a package, and open inputs stay visible through every draft.
 
 export type AssetKind = "deck" | "document" | "sheet" | "agenda" | "actions" | "timeline";
 
@@ -8,22 +8,6 @@ export const ASSET_KINDS: readonly AssetKind[] = [
 ];
 
 export type RenderFormat = "md" | "pdf" | "pptx" | "xlsx";
-export type EvidenceSource = "user" | "workspace" | "clarification";
-
-export interface EvidenceItem {
-  id: string;
-  label: string;
-  value: string;
-  source: EvidenceSource;
-  sourceDetail: string;
-}
-
-export interface ContextPack {
-  request: string;
-  workspace: WorkspaceContext;
-  evidence: EvidenceItem[];
-  gaps: string[];
-}
 
 export interface AssetPlan {
   id: string;
@@ -38,8 +22,6 @@ export interface AssetPlan {
   evidenceIds: string[];
   dependencies: string[];
 }
-
-export type PlanAsset = AssetPlan;
 
 export interface PackageBrief {
   objective: string;
@@ -58,43 +40,6 @@ export interface PackagePlan {
   reply: string;
   brief: PackageBrief;
   assets: AssetPlan[];
-}
-
-export interface ClarifyQuestion {
-  key: string;
-  question: string;
-  placeholder?: string;
-  required?: boolean;
-}
-
-export interface ClarifyResult {
-  mode: "clarify" | "ready";
-  reply: string;
-  questions: ClarifyQuestion[];
-}
-
-export interface WorkspaceContext {
-  organizationName: string;
-  organizationDescription: string;
-  workspacePurpose: string;
-  defaultAudience?: string;
-  toneAndConstraints?: string;
-  additionalContext?: string;
-}
-
-export interface WorkspaceRequestPayload {
-  request: string;
-  workspaceContext: WorkspaceContext;
-  openInputs?: string[];
-}
-
-export interface DraftRequestPayload extends WorkspaceRequestPayload {
-  kind: AssetKind;
-  title: string;
-  assetPlan?: AssetPlan;
-  brief?: PackageBrief;
-  revisionInstruction?: string;
-  previousDraft?: AssetDraft;
 }
 
 export interface Slide { eyebrow: string; title: string; bullets: string[] }

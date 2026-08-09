@@ -12,7 +12,7 @@ export const WERK_PAYMENT_ROUTE = "POST /a2mcp/werk" as const;
 // paid resource is gated on both verbs. Free service metadata lives on /info.
 export const WERK_PAYMENT_DISCOVERY_ROUTE = "GET /a2mcp/werk" as const;
 export const WERK_PAYMENT_DESCRIPTION =
-  "Werk turns one plain-language request into a plan and draft business assets such as presentations, reports, spreadsheets, agendas, action items, and timelines. Each POST is billed separately in USDT0 on X Layer, and drafts may surface missing inputs that the buyer still needs to confirm.";
+  "Werk turns one plain-language request into a finished package of business assets: presentations, documents, spreadsheets, agendas, action items, and timelines. A single paid call plans the package, writes every output, and returns the real files as a zip plus per-file download links. Details Werk cannot know are marked as open inputs rather than invented.";
 // Matches the on-chain service listing for agent 9872. A server that charges
 // less than the listing advertises would let a buyer pay the smaller amount and
 // still claim the deliverable, so these two numbers must be kept in step.
@@ -20,7 +20,7 @@ export const WERK_PAYMENT_DEFAULT_PRICE = "1" as const;
 
 /** Human-readable price, derived rather than string-substituted. */
 export function werkPaymentPriceLabel(price: string = WERK_PAYMENT_DEFAULT_PRICE): string {
-  return `${price} USDT0 / POST`;
+  return `${price} USDT0 / package`;
 }
 
 export const WERK_PAYMENT_PRICE_LABEL = werkPaymentPriceLabel();

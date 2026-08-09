@@ -3,13 +3,7 @@ import { createServer } from "node:http";
 import { test } from "node:test";
 import express from "express";
 import { createA2ARouter } from "./a2a.js";
-import type { AssetDraft, PackagePlan, WorkspaceContext } from "./types.js";
-
-const workspace: WorkspaceContext = {
-  organizationName: "Northstar Labs",
-  organizationDescription: "A B2B SaaS company",
-  workspacePurpose: "Create board-ready business assets from one request",
-};
+import type { AssetDraft, PackagePlan } from "./types.js";
 
 const plan: PackagePlan = {
   packageName: "Board package",
@@ -194,10 +188,10 @@ test("returns a task, advances status, and stores a rendered artifact", async ()
         messageId: "msg-1",
         role: "ROLE_USER",
         parts: [{ text: "Prepare a Q4 board pack for our leadership meeting." }],
-        metadata: { workspaceContext: workspace },
+        metadata: { openInputs: [] },
       },
       configuration: { returnImmediately: true },
-      metadata: { workspaceContext: workspace },
+      metadata: { openInputs: [] },
     });
     assert.equal(response.status, 200);
 
@@ -244,10 +238,10 @@ test("streams progress, delivery, and completion in order", async () => {
         messageId: "msg-1",
         role: "ROLE_USER",
         parts: [{ text: "Prepare a Q4 board pack for our leadership meeting." }],
-        metadata: { workspaceContext: workspace },
+        metadata: { openInputs: [] },
       },
       configuration: { returnImmediately: true },
-      metadata: { workspaceContext: workspace },
+      metadata: { openInputs: [] },
     }, controller.signal);
     assert.equal(response.status, 200);
 
@@ -272,8 +266,7 @@ test("streams progress, delivery, and completion in order", async () => {
   });
 });
 
-test("posts a decision card when the plan still needs input", async () => {
-  let planCalls = 0;
+test("writes the whole package even when the plan still has open inputs", async () => {
   let draftCalls = 0;
   const planWithInputs: PackagePlan = {
     ...plan,
@@ -283,24 +276,8 @@ test("posts a decision card when the plan still needs input", async () => {
     },
   };
 
-  async function waitForInputRequired(baseUrl: string, taskId: string): Promise<TaskSnapshot> {
-    const start = Date.now();
-    while (Date.now() - start < 5000) {
-      const response = await fetch(`${baseUrl}/tasks/${taskId}`);
-      if (response.ok) {
-        const task = await response.json() as TaskSnapshot;
-        if (task.status.state === "input-required") return task;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    throw new Error("Task did not pause for input in time.");
-  }
-
   await withServer(createA2ARouter({ heartbeatMs: 5, taskTtlMs: 60_000 }, {
-    createPlan: async () => {
-      planCalls += 1;
-      return planCalls === 1 ? planWithInputs : plan;
-    },
+    createPlan: async () => planWithInputs,
     createDraft: async () => {
       draftCalls += 1;
       return draft;
@@ -309,7 +286,7 @@ test("posts a decision card when the plan still needs input", async () => {
       bytes: Buffer.from("pdf-bytes"),
       ext: "pdf",
       mime: "application/pdf",
-      filename: "decision-card.pdf",
+      filename: "board-deck.pdf",
     }),
   }), async (baseUrl) => {
     const response = await post(baseUrl, "/message:send", {
@@ -317,44 +294,24 @@ test("posts a decision card when the plan still needs input", async () => {
         messageId: "msg-2",
         role: "ROLE_USER",
         parts: [{ text: "Prepare a GridLink plan." }],
-        metadata: { workspaceContext: workspace },
+        metadata: { openInputs: [] },
       },
       configuration: { returnImmediately: true },
-      metadata: { workspaceContext: workspace },
+      metadata: { openInputs: [] },
     });
     assert.equal(response.status, 200);
 
     const sent = await response.json() as { task: { id: string; status: { state: string } } };
     assert.equal(["submitted", "working"].includes(sent.task.status.state), true);
 
-    const inputRequiredTask = await waitForInputRequired(baseUrl, sent.task.id);
-    assert.equal(inputRequiredTask.artifacts.length, 1);
-    assert.equal(inputRequiredTask.artifacts[0].description, "Decision card for missing details");
-    assert.equal(inputRequiredTask.metadata?.publishedDeliverables?.length, 1);
-    assert.equal(inputRequiredTask.history?.some((message) => message.metadata?.intent === "deliver"), true);
-    assert.equal(draftCalls, 0);
-
-    const followUpResponse = await post(baseUrl, "/message:send", {
-      message: {
-        messageId: "msg-3",
-        taskId: sent.task.id,
-        role: "ROLE_USER",
-        parts: [{ text: "GridLink is the infrastructure team and the numbers are current." }],
-        metadata: { workspaceContext: workspace },
-      },
-      configuration: { returnImmediately: true },
-      metadata: { workspaceContext: workspace },
-    });
-    assert.equal(followUpResponse.status, 200);
-    const resumed = await followUpResponse.json() as { task: { id: string } };
-    assert.equal(resumed.task.id, sent.task.id);
-
+    // One request has to be enough. A detail Werk cannot know is carried into
+    // the deliverables as an open input, never turned into a question that
+    // stops the work and waits for a reply.
     const completedTask = await waitForCompletedTask(baseUrl, sent.task.id);
     assert.equal(completedTask.status.state, "completed");
-    assert.equal(completedTask.artifacts.filter((item) => item.description === "Decision card for missing details").length, 1);
-    assert.equal(completedTask.metadata?.publishedDeliverables?.length, 2);
-    assert.equal(completedTask.history?.filter((message) => message.metadata?.intent === "deliver").length, 2);
-    assert.equal(planCalls, 2);
-    assert.equal(draftCalls, 1);
+    assert.equal(draftCalls, planWithInputs.assets.length);
+    assert.equal(completedTask.artifacts.length, planWithInputs.assets.length);
+    assert.equal(completedTask.artifacts.some((item) => (item.description ?? "").includes("Decision card")), false);
+    assert.deepEqual(completedTask.metadata?.openInputs, planWithInputs.brief.openInputs);
   });
 });

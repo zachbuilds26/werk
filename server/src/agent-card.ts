@@ -61,7 +61,7 @@ export function buildAgentCard(baseUrl: string): AgentCard {
   return {
     name: "Werk",
     description:
-      "Turns one plain-language request into a package of business-ready assets: presentations, documents, spreadsheets, meeting plans, task lists, and schedules. Werk plans the package first, keeps missing details visible instead of inventing them, and publishes each deliverable as a downloadable file.",
+      "Turns one plain-language request into a package of business-ready assets: presentations, documents, spreadsheets, meeting plans, task lists, and schedules. One request is all it needs: Werk plans the package, writes every output, keeps missing details visible instead of inventing them, and publishes each deliverable as a downloadable file.",
     supportedInterfaces: [
       { url, protocolBinding: PROTOCOL_BINDING, protocolVersion: PROTOCOL_VERSION },
     ],
@@ -81,7 +81,7 @@ export function buildAgentCard(baseUrl: string): AgentCard {
         id: "business-asset-package",
         name: "Business asset generator",
         description:
-          "Describe the outcome you need in plain language. Werk decides which outputs genuinely help, drafts each one, and returns them as files. When a needed detail is missing it publishes a decision card asking for it rather than inventing an answer.",
+          "Describe the outcome you need in plain language and send it once. Werk decides which outputs genuinely help, writes every one of them, and returns them as files. It never stops to interview you: a detail it cannot know is marked in the output as an open input to confirm, rather than invented.",
         tags: ["documents", "presentations", "spreadsheets", "planning", "business"],
         examples: [
           "Create a client proposal for my website design service.",

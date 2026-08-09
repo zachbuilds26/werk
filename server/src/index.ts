@@ -4,30 +4,27 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import cors from "cors";
 import express from "express";
-import JSZip from "jszip";
-import { hasGroqKey, groqJson } from "./groq.js";
+import { hasGroqKey } from "./groq.js";
 import { createA2ARouter } from "./a2a.js";
 import { AGENT_CARD_PATH, createAgentCardRouter } from "./agent-card.js";
-import { createMarketplaceRouter, PROVIDER_PATH } from "./marketplace.js";
-import { CLARIFY_SYSTEM } from "./prompts.js";
+import { FILES_SEGMENT, PROVIDER_PATH, createMarketplaceRouter } from "./marketplace.js";
+import { PackageStore, createPackageFilesRouter } from "./package-store.js";
+import { buildPackageZip } from "./package-build.js";
 import {
-  draftRequestSchema, generateRequestSchema, packageRequestSchema, renderRequestSchema,
-  requestPayloadSchema, validationDetails,
+  draftRequestSchema, generateRequestSchema, packageRequestSchema, renderRequestSchema, validationDetails,
 } from "./schemas.js";
-import { buildWorkspaceRequest } from "./workspace.js";
-import { createDraft, createPlan, withOpenInputs } from "./workflows.js";
-import type { ClarifyQuestion, ClarifyResult } from "./types.js";
+import { createDraft, createPlan } from "./workflows.js";
 import { createWerkPaymentIntegration } from "./okx-payment.js";
 import { createRateLimiter, isA2APath, positiveInteger } from "./rate-limit.js";
 import { startKeepAlive } from "./keepalive.js";
 
 const PORT = Number(process.env.PORT) || 8787;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MAX_TOKENS_CLARIFY = 900;
 const DRAFT_PACE_MS = 18000;
 
 const app = express();
 const werkPayment = createWerkPaymentIntegration();
+const packageStore = new PackageStore();
 // Only publish payment details a buyer can actually pay to. When payment is
 // switched on but incomplete the listing would otherwise advertise a real
 // price alongside the zero address, and a buyer paying that loses the funds.
@@ -80,63 +77,16 @@ const agentGate: express.RequestHandler = (req, res, next) => {
 app.get(AGENT_CARD_PATH, cors(), createAgentCardRouter());
 
 app.use(agentGate, createA2ARouter());
+// Downloads of files a buyer has already paid for are mounted ahead of the
+// paywall on purpose: a purchased deliverable must never answer 402.
+app.use(`${PROVIDER_PATH}/${FILES_SEGMENT}`, createPackageFilesRouter(packageStore));
 app.use(werkPayment.middleware);
-app.use(PROVIDER_PATH, createMarketplaceRouter(undefined, undefined, marketplacePayment));
+app.use(PROVIDER_PATH, createMarketplaceRouter(undefined, undefined, marketplacePayment, packageStore));
 app.use("/api", postOnly(apiLimiter));
-
-function asString(value: unknown, max: number): string {
-  return typeof value === "string" ? value.trim().slice(0, max) : "";
-}
 
 function invalid(res: express.Response, error: { issues: unknown[] }): void {
   res.status(400).json({ error: "Invalid request", details: validationDetails(error as never) });
 }
-
-function coerceClarify(raw: unknown): ClarifyResult {
-  const obj = (raw ?? {}) as Record<string, unknown>;
-  if (obj.mode === "ready") return { mode: "ready", reply: "", questions: [] };
-  if (obj.mode !== "clarify" || !Array.isArray(obj.questions)) throw new Error("Werk could not form safe clarification questions. Please try again.");
-  const questions: ClarifyQuestion[] = obj.questions.map((item) => {
-    const question = (item ?? {}) as Record<string, unknown>;
-    return {
-      key: asString(question.key, 30).replace(/\s+/g, "-").toLowerCase() || "detail",
-      question: asString(question.question, 200),
-      placeholder: asString(question.placeholder, 120) || undefined,
-      required: Boolean(question.required),
-    };
-  }).filter((question) => question.question).slice(0, 4);
-  if (!questions.length) throw new Error("Werk could not form safe clarification questions. Please try again.");
-  return { mode: "clarify", reply: asString(obj.reply, 240), questions };
-}
-
-app.post("/api/clarify", async (req, res) => {
-  const parsed = requestPayloadSchema.safeParse(req.body);
-  if (!parsed.success) return invalid(res, parsed.error);
-  if (!hasGroqKey()) return res.status(503).json({ error: "No Groq key set on the server" });
-  try {
-    const request = withOpenInputs(parsed.data.request, parsed.data.openInputs);
-    const raw = await groqJson(CLARIFY_SYSTEM, buildWorkspaceRequest(parsed.data.workspaceContext, request), MAX_TOKENS_CLARIFY);
-    res.json(coerceClarify(raw));
-  } catch (error) {
-    res.status(502).json({ error: error instanceof Error ? error.message : "Clarification failed" });
-  }
-});
-
-app.post("/api/plan", async (req, res) => {
-  const parsed = requestPayloadSchema.safeParse(req.body);
-  if (!parsed.success) return invalid(res, parsed.error);
-  if (!hasGroqKey()) return res.status(503).json({ error: "No Groq key set on the server" });
-  try {
-    const plan = await createPlan({
-      request: parsed.data.request,
-      workspaceContext: parsed.data.workspaceContext,
-      openInputs: parsed.data.openInputs,
-    });
-    res.json(plan);
-  } catch (error) {
-    res.status(502).json({ error: error instanceof Error ? error.message : "Planning failed" });
-  }
-});
 
 app.post("/api/draft", async (req, res) => {
   const parsed = draftRequestSchema.safeParse(req.body);
@@ -146,7 +96,6 @@ app.post("/api/draft", async (req, res) => {
   try {
     const draft = await createDraft({
       request: parsed.data.request,
-      workspaceContext: parsed.data.workspaceContext,
       openInputs: parsed.data.openInputs,
       assetPlan: parsed.data.assetPlan,
       brief: parsed.data.brief,
@@ -179,24 +128,15 @@ app.post("/api/package", async (req, res) => {
   if (!parsed.success) return invalid(res, parsed.error);
   try {
     const { renderDraft } = await import("./render.js");
-    const zip = new JSZip();
-    const index: string[] = [];
-    const gaps = new Set<string>();
-    for (const [indexNumber, item] of parsed.data.items.entries()) {
+    const entries = [];
+    for (const item of parsed.data.items) {
       const result = await renderDraft(item.draft, item.format);
-      const safe = item.draft.title.replace(/[^a-z0-9\-_ ]/gi, "").trim().slice(0, 60) || "output";
-      const name = `${String(indexNumber + 1).padStart(2, "0")} ${safe}.${result.ext}`;
-      zip.file(name, result.bytes);
-      index.push(`- ${name}`);
-      item.draft.metadata?.gaps.forEach((gap) => gaps.add(gap));
+      entries.push({ title: item.draft.title, ext: result.ext, bytes: result.bytes, gaps: item.draft.metadata?.gaps });
     }
-    const notes = gaps.size ? `\n\n## Details to confirm\n\n${[...gaps].map((gap) => `- ${gap}`).join("\n")}\n\nThis package is a draft until these details are confirmed.` : "";
-    zip.file("00 INDEX.md", `# ${parsed.data.packageName}\n\n${parsed.data.items.length} outputs assembled by Werk.\n\n${index.join("\n")}${notes}\n`);
-    const bytes = await zip.generateAsync({ type: "nodebuffer" });
-    const safeName = parsed.data.packageName.replace(/[^a-z0-9\-_ ]/gi, "").trim().slice(0, 60) || "package";
+    const zip = await buildPackageZip(parsed.data.packageName, entries);
     res.setHeader("Content-Type", "application/zip");
-    res.setHeader("Content-Disposition", `attachment; filename="${safeName}.zip"`);
-    res.send(bytes);
+    res.setHeader("Content-Disposition", `attachment; filename="${zip.filename}"`);
+    res.send(zip.bytes);
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : "Package failed" });
   }
@@ -208,8 +148,6 @@ app.post("/api/generate", async (req, res) => {
   if (!hasGroqKey()) return res.status(503).json({ error: "No Groq key set on the server" });
 
   const payload = parsed.data;
-  const plan = payload.plan;
-  if (!plan) return res.status(400).json({ error: "Review and confirm the suggested outputs before creating drafts." });
   const jobId = crypto.randomUUID();
   let sequence = 0;
   // A client that navigates away must not leave the loop running: each
@@ -238,6 +176,15 @@ app.post("/api/generate", async (req, res) => {
   });
   try {
     send({ type: "job-started" });
+    // One prompt is the whole interface. A caller that did not bring a plan gets
+    // one made here rather than being sent to a second endpoint and a review
+    // screen before any real work starts.
+    const plan = payload.plan ?? await createPlan({
+      request: payload.request,
+      openInputs: payload.openInputs,
+      signal: controller.signal,
+    });
+    if (controller.signal.aborted) return res.end();
     send({ type: "plan", plan });
     plan.assets.forEach((asset) => send({ type: "asset-status", id: asset.id, status: "queued" }));
     for (const [index, asset] of plan.assets.entries()) {
@@ -248,7 +195,6 @@ app.post("/api/generate", async (req, res) => {
         send({ type: "asset-status", id: asset.id, status: "drafting" });
         const draft = await createDraft({
           request: payload.request,
-          workspaceContext: payload.workspaceContext,
           openInputs: payload.openInputs,
           assetPlan: asset,
           brief: plan.brief,

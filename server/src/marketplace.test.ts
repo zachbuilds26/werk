@@ -2,16 +2,12 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { test } from "node:test";
 import express from "express";
-import { createMarketplaceRouter } from "./marketplace.js";
+import { FILES_SEGMENT, createMarketplaceRouter } from "./marketplace.js";
+import { PackageStore, createPackageFilesRouter } from "./package-store.js";
 import { buildWerkPaymentListing, OKX_PAYMENT_ASSET, OKX_PAYMENT_NETWORK, WERK_PAYMENT_DESCRIPTION, WERK_PAYMENT_PRICE_LABEL } from "./okx-payment.js";
-import type { AssetDraft, PackagePlan, WorkspaceContext } from "./types.js";
+import type { AssetDraft, PackagePlan } from "./types.js";
 
 const secret = "marketplace-test-secret-1234567890";
-const workspace: WorkspaceContext = {
-  organizationName: "Marketplace request",
-  organizationDescription: "No organization context was supplied.",
-  workspacePurpose: "Create useful professional work outputs from the supplied request.",
-};
 const plan: PackagePlan = {
   packageName: "Launch package",
   packageTitle: "Product launch package",
@@ -58,6 +54,10 @@ function config(overrides: Partial<NonNullable<Config>> = {}): NonNullable<Confi
     enabled: true,
     tokenSecret: secret,
     timeoutMs: 1000,
+    packageTimeoutMs: 60_000,
+    packageReserveMs: 10,
+    minAssetMs: 10,
+    inlineMaxBytes: 6_000_000,
     maxConcurrent: 1,
     rateLimitWindowMs: 60_000,
     rateLimitMax: 10,
@@ -154,7 +154,7 @@ test("returns paid discovery metadata and keeps the plan/draft flow intact", asy
       payTo: payment.payTo,
       mimeType: "application/json",
     });
-    assert.deepEqual(discovered.operations, ["plan", "draft"]);
+    assert.deepEqual(discovered.operations, ["package", "plan", "draft"]);
 
     const planResponse = await post(baseUrl, {
       operation: "plan",
@@ -180,17 +180,14 @@ test("returns paid discovery metadata and keeps the plan/draft flow intact", asy
 
   const receivedPlan = planInput as {
     request: string;
-    workspaceContext: WorkspaceContext;
     openInputs: string[];
     signal: AbortSignal;
   };
   assert.deepEqual({
     request: receivedPlan.request,
-    workspaceContext: receivedPlan.workspaceContext,
     openInputs: receivedPlan.openInputs,
   }, {
     request: "Prepare a product launch package.",
-    workspaceContext: workspace,
     openInputs: ["Needs your input: launch date"],
   });
   assert.equal(receivedPlan.signal.aborted, false);
@@ -336,5 +333,192 @@ test("a request-less call returns a copyable example instead of prose", async ()
     assert.ok(body.example.includes("?request="), `example lacks a request param: ${body.example}`);
     const replay = await fetch(body.example);
     assert.equal(replay.status, 200, "the example URL should succeed as-is");
+  });
+});
+
+// --- one paid call, whole package -------------------------------------------
+
+const sheetDraft: AssetDraft = {
+  kind: "sheet",
+  title: "Launch budget tracker",
+  blurb: "A tracker that keeps every launch cost line visible and easy to update as real numbers arrive.",
+  table: {
+    columns: ["Item", "Owner", "Cost"],
+    rows: [["Venue", "Needs your input: owner", "Needs your input: cost"]],
+  },
+};
+
+const threeAssetPlan: PackagePlan = {
+  ...plan,
+  assets: [
+    plan.assets[0],
+    { ...plan.assets[0], id: "a2", kind: "sheet", title: "Launch budget tracker" },
+    { ...plan.assets[0], id: "a3", title: "Launch comms plan" },
+  ],
+};
+
+const draftPerKind: NonNullable<Operations>["createDraft"] = async ({ assetPlan }) =>
+  assetPlan.kind === "sheet" ? sheetDraft : { ...draft, title: assetPlan.title };
+
+type PackageBody = {
+  result: {
+    operation: string;
+    plan: PackagePlan;
+    assets: { id: string; status: string; format?: string; filename?: string; url?: string; reason?: string }[];
+    package: { filename: string; byteLength: number; url: string; raw?: string };
+    delivered: number;
+    skipped: number;
+    expiresAt: number;
+  };
+};
+
+/** Mounts the paid router and the free download router over one shared store, the way index.ts does. */
+async function withPackageProvider(
+  ops: NonNullable<Operations>,
+  cfg: NonNullable<Config>,
+  run: (baseUrl: string) => Promise<void>,
+): Promise<void> {
+  const store = new PackageStore();
+  const app = express();
+  app.use(express.json());
+  app.use(`/a2mcp/werk/${FILES_SEGMENT}`, createPackageFilesRouter(store));
+  app.use("/a2mcp/werk", createMarketplaceRouter(cfg, ops, null, store));
+  const server = createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("no TCP address");
+  try {
+    await run(`http://127.0.0.1:${address.port}/a2mcp/werk`);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((e) => e ? reject(e) : resolve()));
+  }
+}
+
+test("one paid call returns the plan, every rendered file, and an inline zip", async () => {
+  await withPackageProvider(
+    operations({ createPlan: async () => threeAssetPlan, createDraft: draftPerKind }),
+    config(),
+    async (baseUrl) => {
+      const response = await post(baseUrl, { operation: "package", request: "Prepare a product launch package." });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as PackageBody;
+      assert.equal(body.result.operation, "package");
+      assert.deepEqual(body.result.plan, threeAssetPlan);
+      assert.equal(body.result.delivered, 3);
+      assert.equal(body.result.skipped, 0);
+      assert.equal(body.result.assets.length, 3);
+      assert.ok(body.result.assets.every((asset) => asset.status === "ready"), JSON.stringify(body.result.assets));
+
+      // Real renders, not descriptors: the sheet must come back as a workbook.
+      assert.deepEqual(body.result.assets.map((asset) => asset.format), ["pdf", "xlsx", "pdf"]);
+      assert.ok(body.result.assets.every((asset) => (asset.url ?? "").includes(`/${FILES_SEGMENT}/`)));
+
+      // The zip travels inline so the buyer's saved response is self-contained.
+      assert.ok(body.result.package.byteLength > 0);
+      assert.equal(typeof body.result.package.raw, "string");
+      assert.equal(Buffer.from(body.result.package.raw ?? "", "base64").subarray(0, 2).toString(), "PK");
+      assert.ok(body.result.expiresAt > Date.now());
+    },
+  );
+});
+
+test("a bare request buys the package, not a plan the buyer must pay again to use", async () => {
+  await withPackageProvider(operations({ createDraft: draftPerKind }), config(), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}?request=${encodeURIComponent("Prepare a product launch package.")}`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as PackageBody;
+    assert.equal(body.result.operation, "package");
+    assert.equal(body.result.delivered, 1);
+  });
+});
+
+test("a package ships the assets that succeeded when one of them fails", async () => {
+  await withPackageProvider(
+    operations({
+      createPlan: async () => threeAssetPlan,
+      createDraft: async (input) => {
+        if (input.assetPlan.id === "a2") throw new Error("The model returned a malformed draft.");
+        return { ...draft, title: input.assetPlan.title };
+      },
+    }),
+    config(),
+    async (baseUrl) => {
+      const response = await post(baseUrl, { operation: "package", request: "Prepare a product launch package." });
+      // A buyer who paid must never receive nothing because one output broke.
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as PackageBody;
+      assert.equal(body.result.delivered, 2);
+      assert.equal(body.result.skipped, 1);
+      const failed = body.result.assets.find((asset) => asset.id === "a2");
+      assert.equal(failed?.status, "skipped");
+      assert.match(failed?.reason ?? "", /malformed draft/);
+      assert.equal(typeof body.result.package.raw, "string");
+    },
+  );
+});
+
+test("a package with nothing in it is an error rather than an empty success", async () => {
+  await withPackageProvider(
+    operations({ createDraft: async () => { throw new Error("no model"); } }),
+    config(),
+    async (baseUrl) => {
+      const response = await post(baseUrl, { operation: "package", request: "Prepare a product launch package." });
+      assert.equal(response.status, 503);
+      const body = await response.json() as { error: { code: string } };
+      assert.equal(body.error.code, "GENERATION_UNAVAILABLE");
+    },
+  );
+});
+
+test("a package short on time delivers what it has instead of timing out", async () => {
+  const slowDraft: NonNullable<Operations>["createDraft"] = async ({ assetPlan }) => {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    return { ...draft, title: assetPlan.title };
+  };
+
+  await withPackageProvider(
+    operations({ createPlan: async () => threeAssetPlan, createDraft: slowDraft }),
+    // Enough budget for the first output but not all three, so the run has to
+    // stop starting new work and ship what it finished.
+    config({ packageTimeoutMs: 900, packageReserveMs: 10, minAssetMs: 250 }),
+    async (baseUrl) => {
+      const response = await post(baseUrl, { operation: "package", request: "Prepare a product launch package." });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as PackageBody;
+      assert.ok(body.result.delivered >= 1, `expected at least one delivered, got ${body.result.delivered}`);
+      assert.ok(body.result.skipped >= 1, `expected at least one skipped, got ${body.result.skipped}`);
+      assert.equal(body.result.delivered + body.result.skipped, 3);
+
+      const skipped = body.result.assets.find((asset) => asset.status === "skipped");
+      assert.match(skipped?.reason ?? "", /time/i);
+      // The buyer paid, so whatever finished still ships as a real zip.
+      assert.equal(typeof body.result.package.raw, "string");
+    },
+  );
+});
+
+test("a delivered file downloads from its url without paying again", async () => {
+  await withPackageProvider(operations({ createDraft: draftPerKind }), config(), async (baseUrl) => {
+    const response = await post(baseUrl, { operation: "package", request: "Prepare a product launch package." });
+    const body = await response.json() as PackageBody;
+
+    const file = await fetch(body.result.assets[0].url ?? "");
+    assert.equal(file.status, 200);
+    assert.match(file.headers.get("content-type") ?? "", /application\/pdf/);
+    assert.match(file.headers.get("content-disposition") ?? "", /attachment; filename=/);
+    const bytes = Buffer.from(await file.arrayBuffer());
+    assert.equal(bytes.subarray(0, 4).toString(), "%PDF");
+
+    const zip = await fetch(body.result.package.url);
+    assert.equal(zip.status, 200);
+    assert.match(zip.headers.get("content-type") ?? "", /application\/zip/);
+
+    // An expired or invented id answers JSON, never the SPA shell.
+    const missing = await fetch(`${baseUrl}/${FILES_SEGMENT}/nope/nope`);
+    assert.equal(missing.status, 404);
+    assert.match(missing.headers.get("content-type") ?? "", /application\/json/);
   });
 });

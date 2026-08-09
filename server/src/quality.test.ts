@@ -73,11 +73,6 @@ test("coerced sheet rows never exceed the coerced column count", () => {
 test("rejects unrecognised fields at the API boundary", () => {
   const payload = requestPayloadSchema.safeParse({
     request: "Prepare a proposal for a new client",
-    workspaceContext: {
-      organizationName: "Maya Studio",
-      organizationDescription: "Independent web designer",
-      workspacePurpose: "Client proposals and project handovers",
-    },
     unexpected: "must not pass",
   });
 

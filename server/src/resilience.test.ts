@@ -112,7 +112,7 @@ test("agent middleware matches only the A2A surface", () => {
   }
 
   for (const path of [
-    "/api/plan",
+    "/api/draft",
     "/api/generate",
     "/api/render",
     "/api/health",

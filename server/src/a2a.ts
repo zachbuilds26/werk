@@ -3,14 +3,7 @@ import express from "express";
 import { z } from "zod";
 import { buildArtifactDescriptor, renderFileForDraft, safeFilename } from "./artifacts.js";
 import { createDraft, createPlan } from "./workflows.js";
-import { coerceWorkspaceContext } from "./workspace.js";
-import type { AssetDraft, WorkspaceContext } from "./types.js";
-
-const DEFAULT_WORKSPACE: WorkspaceContext = {
-  organizationName: "Marketplace request",
-  organizationDescription: "No organization context was supplied.",
-  workspacePurpose: "Create useful professional work outputs from the supplied request.",
-};
+import type { AssetDraft } from "./types.js";
 
 const DEFAULT_TASK_TTL_MS = 60 * 60 * 1000;
 const DEFAULT_HEARTBEAT_MS = 12 * 1000;
@@ -114,7 +107,6 @@ type A2ARouterConfig = {
 
 type TaskInput = {
   request: string;
-  workspaceContext: WorkspaceContext;
   openInputs: string[];
 };
 
@@ -200,12 +192,6 @@ function messageText(message: A2AMessage): string {
   return chunks.join("\n\n").trim();
 }
 
-function workspaceFromMetadata(metadata: Record<string, unknown> | undefined): WorkspaceContext {
-  if (!metadata) return DEFAULT_WORKSPACE;
-  const parsed = coerceWorkspaceContext(metadata.workspaceContext ?? metadata.workspace_context);
-  return parsed ?? DEFAULT_WORKSPACE;
-}
-
 function openInputsFromMetadata(metadata: Record<string, unknown> | undefined): string[] {
   const value = metadata?.openInputs ?? metadata?.open_inputs;
   if (!Array.isArray(value)) return [];
@@ -287,7 +273,7 @@ class TaskStore {
     return this.tasks.get(taskId) ?? null;
   }
 
-  create(message: A2AMessage, workspaceContext: WorkspaceContext, openInputs: string[], baseUrl: string): TaskRecord {
+  create(message: A2AMessage, openInputs: string[], baseUrl: string): TaskRecord {
     const taskId = message.task_id || crypto.randomUUID();
     const contextId = message.context_id || crypto.randomUUID();
     const now = Date.now();
@@ -300,7 +286,6 @@ class TaskStore {
         history: [{ ...message, context_id: contextId, task_id: taskId }],
         metadata: {
           request: messageText(message),
-          workspaceContext,
           openInputs,
           baseUrl,
           marketplace: {
@@ -490,7 +475,6 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
       store.addStatus(record, "working", "Planning the package.");
       const plan = await withHeartbeat(config.heartbeatMs, (message) => store.addStatus(record, "working", message), () => operations.createPlan({
         request: input.request,
-        workspaceContext: input.workspaceContext,
         openInputs: input.openInputs,
       }));
 
@@ -506,29 +490,9 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
 
       store.addStatus(record, "working", etaMessage(plan.assets.length, 0));
 
-      if (pendingInputs.length > 0) {
-        store.addStatus(record, "input-required", `Decision card posted. Waiting on ${pendingInputs.length} missing detail${pendingInputs.length === 1 ? "" : "s"}.`);
-        const decisionCard: AssetDraft = {
-          kind: "document",
-          title: `${plan.packageTitle} decision card`,
-          blurb: plan.reply || "I need these details before I can finish the package.",
-          sections: [
-            { heading: "Details to confirm", body: pendingInputs },
-            { heading: "Next step", body: ["Reply with the missing details and I will continue."] },
-          ],
-          metadata: {
-            evidenceIds: [],
-            assumptions: [],
-            gaps: pendingInputs,
-            quality: [],
-            revision: 1,
-          },
-        };
-        const rendered = await operations.renderFileForDraft(decisionCard);
-        store.addArtifact(record, decisionCard, rendered, { description: "Decision card for missing details" });
-        return;
-      }
-
+      // A missing detail is not a reason to stop and interview the caller. Werk
+      // writes the whole package and carries what it cannot know into the files
+      // as visible open inputs, so one request is always enough to get work back.
       store.addStatus(record, "working", `Drafting ${plan.assets.length} deliverable${plan.assets.length === 1 ? "" : "s"}.`);
 
       let failures = 0;
@@ -538,7 +502,6 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
             store.addStatus(record, "working", `Drafting ${asset.title}.`);
             return operations.createDraft({
               request: input.request,
-              workspaceContext: input.workspaceContext,
               openInputs: input.openInputs,
               assetPlan: asset,
               brief: plan.brief,
@@ -595,7 +558,6 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
     const request = messageText(message);
     if (!request) return res.status(400).json({ error: "Message text is required." });
 
-    const workspaceContext = workspaceFromMetadata(parsed.data.metadata ?? parsed.data.message.metadata);
     const openInputs = openInputsFromMetadata(parsed.data.metadata ?? parsed.data.message.metadata);
     const existing = message.task_id ? store.get(message.task_id) : null;
     if (existing) {
@@ -605,15 +567,15 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
         const combinedRequest = priorRequest ? `${priorRequest}\n\nFollow-up details:\n${request}` : request;
         existing.task.metadata = { ...(metadata ?? {}), request: combinedRequest };
         existing.task.history = [...existing.task.history, { ...message, context_id: existing.task.context_id, task_id: existing.task.id }];
-        void store.ensureProcessing(existing, () => runTask(existing, { request: combinedRequest, workspaceContext: workspaceFromMetadata(metadata), openInputs: [] }));
+        void store.ensureProcessing(existing, () => runTask(existing, { request: combinedRequest, openInputs: [] }));
       }
       return res.json({ task: toTaskResponse(existing) });
     }
 
     const baseUrl = `${req.protocol}://${req.get("host")}`;
-    const record = store.create(message, workspaceContext, openInputs, baseUrl);
+    const record = store.create(message, openInputs, baseUrl);
     store.addStatus(record, "working", "Accepted. Planning the package.");
-    void store.ensureProcessing(record, () => runTask(record, { request, workspaceContext, openInputs }));
+    void store.ensureProcessing(record, () => runTask(record, { request, openInputs }));
     return res.json({ task: toTaskResponse(record) });
   };
 
@@ -627,18 +589,16 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
     let request = messageText(message);
     if (!request) return res.status(400).json({ error: "Message text is required." });
 
-    let workspaceContext = workspaceFromMetadata(parsed.data.metadata ?? parsed.data.message.metadata);
     let openInputs = openInputsFromMetadata(parsed.data.metadata ?? parsed.data.message.metadata);
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const existing = message.task_id ? store.get(message.task_id) : null;
     const freshTask = !existing;
-    const record = existing ?? store.create(message, workspaceContext, openInputs, baseUrl);
+    const record = existing ?? store.create(message, openInputs, baseUrl);
     if (record.task.status.state === "input-required") {
       const metadata = record.task.metadata as Record<string, unknown> | undefined;
       const priorRequest = asString(metadata?.request, 6000);
       const nextRequest = priorRequest ? `${priorRequest}\n\nFollow-up details:\n${request}` : request;
       request = nextRequest;
-      workspaceContext = workspaceFromMetadata(metadata);
       openInputs = [];
       record.task.metadata = { ...(metadata ?? {}), request: nextRequest };
       record.task.history = [...record.task.history, { ...message, context_id: record.task.context_id, task_id: record.task.id }];
@@ -669,7 +629,7 @@ function createRouter(config: A2ARouterConfig, operations: A2AOperations): expre
     }
 
     if (!record.processing && !record.terminal) {
-      void store.ensureProcessing(record, () => runTask(record, { request, workspaceContext, openInputs }));
+      void store.ensureProcessing(record, () => runTask(record, { request, openInputs }));
     }
   };
 
