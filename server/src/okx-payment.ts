@@ -113,7 +113,7 @@ export const WERK_INPUT_FIELDS = [
     name: "operation",
     type: "string",
     required: false,
-    description: 'Leave empty for a package plan. Use "draft" only when rendering one asset from a plan you already have.',
+    description: 'Leave empty to buy the whole package in this one call. Use "plan" or "draft" only for the older two-step flow.',
   },
 ] as const;
 
