@@ -1,21 +1,21 @@
 const steps = [
   {
     num: "01",
-    title: "Describe",
-    body: "Say what you need in your own words. Werk asks only for the details that change the result.",
-    chip: "Plain language",
+    title: "Send",
+    body: "Say what you need in plain language. One prompt is the whole interface—no setup, no interview.",
+    chip: "Just send it",
   },
   {
     num: "02",
-    title: "Review",
-    body: "Werk suggests a small set of useful outputs. You choose what to create and keep missing details visible.",
-    chip: "You stay in control",
+    title: "Werk writes",
+    body: "Werk chooses the outputs that genuinely help, writes them all, and marks the details it could not know.",
+    chip: "Complete package",
   },
   {
     num: "03",
-    title: "Export",
-    body: "Review each draft, request changes, and export the finished files. Your work stays on this browser.",
-    chip: "Clear drafts",
+    title: "Review & export",
+    body: "Read each draft, request changes, fill in the open details, and download. Your work stays in this browser.",
+    chip: "Ready to use",
   },
 ]
 
@@ -25,9 +25,9 @@ export default function HowItWorks() {
       <div className="container">
         <div className="section__head section__head--center reveal">
           <span className="eyebrow eyebrow--center">How it works</span>
-          <h2 className="display section__title">Three steps. One workflow.</h2>
+          <h2 className="display section__title">One request. Three steps.</h2>
           <p className="lead">
-            Werk runs like software, not a chat. Make a request and it returns a finished package.
+            Send what you need. Werk writes everything and gives you the finished package.
           </p>
         </div>
         <div className="steps reveal">

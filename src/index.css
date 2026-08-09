@@ -1644,33 +1644,83 @@ h2.display {
 /* =====================================================================
    CX â€” Claude-inspired conversational workspace
    ===================================================================== */
-/* page surface that centers the app window */
-.cx-shell {
+/* The workspace is a plain page. No window frame, no centred card, no fake
+   titlebar: content sits directly on the page and the page scrolls. */
+.cx-page {
   --r-sm: 6px;
   --r: 12px;
   --r-lg: 16px;
   min-height: 100vh;
   min-height: 100dvh;
-  background: var(--bg-2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: clamp(0px, 2vw, 24px);
-}
-
-/* the app window â€” mirrors the AppPreview card (chrome bar + sidebar + chat) */
-.cx {
-  width: 100%;
-  max-width: 1080px;
-  height: min(calc(100vh - 48px), 940px);
-  height: min(calc(100dvh - 48px), 940px);
+  background: var(--bg);
   display: flex;
   flex-direction: column;
-  background: var(--surface);
-  border: 1.5px solid var(--line);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-lg);
+}
+
+/* Real page header. Fixed height, and the status sits in a fixed-width slot so
+   its text changing from "Planning your outputs" to "Done · 3 of 3" cannot
+   move the brand or the buttons. */
+.cx-top {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg);
+  border-bottom: 1.5px solid var(--line-2);
+}
+.cx-top__inner {
+  width: 100%;
+  max-width: 880px;
+  margin: 0 auto;
+  height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-inline: clamp(16px, 4vw, 28px);
+}
+.cx-top__brand {
+  flex: none;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+}
+.cx-top__brand .brand__mark { height: 1.15em; }
+.cx-top__status {
+  flex: none;
+  width: 170px;
+  justify-content: center;
   overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cx-top__actions {
+  margin-left: auto;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cx-top__act {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--font-ui); font-weight: 500; font-size: 0.78rem;
+  color: var(--ink-2);
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  border: 1.5px solid var(--line);
+  background: var(--surface);
+  transition: background 0.16s var(--ease), color 0.16s var(--ease), border-color 0.16s var(--ease);
+}
+.cx-top__act:hover:not(:disabled) { background: var(--bg-2); color: var(--ink); border-color: var(--ink-2); }
+.cx-top__act:disabled { opacity: 0.5; cursor: default; }
+.cx-top__act[hidden] { display: none; }
+
+.cx-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 /* window chrome bar (dots + title + assets pill) */
@@ -1772,119 +1822,7 @@ h2.display {
 .cx__mobile-item:disabled { opacity: 0.5; cursor: progress; }
 
 /* two-column body: asset sidebar + chat main */
-.cx__body {
-  flex: 1;
-  display: grid;
-  grid-template-columns: 240px 1fr;
-  min-height: 0;
-}
-
-/* sidebar — the package Werk assembled (hidden on narrow viewports) */
-.cx__side {
-  display: flex; flex-direction: column;
-  border-right: 1.5px solid var(--line-2);
-  background: var(--surface);
-  padding: 14px 12px;
-  min-height: 0;
-}
-.cx__side-label {
-  display: inline-flex; align-items: center; gap: 7px;
-  margin: 2px 4px 8px;
-  color: var(--muted);
-  font-family: var(--font-ui); font-weight: 500; font-size: 0.66rem;
-  letter-spacing: 0.12em; text-transform: uppercase;
-}
-.cx__side-label svg { color: var(--ink); }
-.cx__side-list {
-  flex: 1; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 4px;
-  min-height: 0;
-}
-.cx__side-empty {
-  margin: 8px 4px;
-  font-family: var(--font-ui); font-weight: 500; font-size: 0.8rem;
-  color: var(--muted);
-}
-.cx__side-item {
-  display: flex; align-items: center; gap: 9px;
-  padding: 8px 10px;
-  border-radius: var(--r-sm);
-  border: 1.5px solid transparent;
-  color: var(--ink-2);
-  font-family: var(--font-ui); font-weight: 500; font-size: 0.82rem;
-  text-align: left; width: 100%;
-  transition: background 0.16s var(--ease), border-color 0.16s var(--ease);
-}
-.cx__side-item:not(:disabled):hover { background: var(--bg-2); }
-.cx__side-item.is-active {
-  background: var(--bg-2);
-  border-color: var(--line);
-  color: var(--ink);
-  font-weight: 600;
-}
-.cx__side-item:disabled { cursor: default; opacity: 0.7; }
-.cx__side-icon { flex: none; display: grid; place-items: center; color: var(--muted); }
-.cx__side-item.is-active .cx__side-icon { color: var(--ink); }
-.cx__side-name {
-  flex: 1; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.cx__side-status { flex: none; width: 18px; display: grid; place-items: center; }
-.cx__side-actions {
-  flex: none;
-  display: flex; flex-direction: column; gap: 8px;
-  padding-top: 12px; margin-top: 4px;
-  border-top: 1.5px solid var(--line-2);
-}
-.cx__side-row { display: flex; gap: 8px; }
-.cx__workspace-card {
-  display: flex; flex-direction: column; gap: 7px;
-  padding: 14px;
-  border: 1.5px solid var(--line-2);
-  border-radius: var(--r);
-  background: var(--bg-2);
-}
-.cx__workspace-label {
-  display: inline-flex; align-items: center; gap: 7px;
-  font-family: var(--font-ui); font-weight: 700; font-size: 0.72rem;
-  letter-spacing: 0.12em; text-transform: uppercase;
-  color: var(--ink-2);
-}
-.cx__workspace-label svg { color: var(--ink); }
-.cx__workspace-name {
-  font-family: var(--font-display); font-weight: 600; font-size: 1rem;
-  color: var(--ink); font-variation-settings: "opsz" 22;
-}
-.cx__workspace-copy {
-  font-family: var(--font-ui); font-weight: 500; font-size: 0.82rem;
-  line-height: 1.45; color: var(--ink-2);
-}
-.cx__side-act--full { align-self: stretch; width: 100%; flex: none; }
-.cx__side-pkg {
-  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  font-family: var(--font-ui); font-weight: 600; font-size: 0.8rem;
-  color: var(--on-accent);
-  padding: 10px 12px;
-  border-radius: var(--r-sm);
-  border: 1.5px solid var(--ink);
-  background: var(--ink);
-  transition: background 0.16s var(--ease), transform 0.15s var(--ease), opacity 0.16s var(--ease);
-}
-.cx__side-pkg:hover:not(:disabled) { background: #1d4a73; border-color: #1d4a73; transform: translateY(-1px); }
-.cx__side-pkg:disabled { opacity: 0.6; cursor: progress; }
-.cx__side-act {
-  flex: 1;
-  font-family: var(--font-ui); font-weight: 500; font-size: 0.78rem;
-  color: var(--ink-2);
-  padding: 8px 10px;
-  border-radius: var(--r-sm);
-  border: 1.5px solid var(--line);
-  background: var(--surface);
-  transition: background 0.16s var(--ease), color 0.16s var(--ease), border-color 0.16s var(--ease);
-}
-.cx__side-act:hover { background: var(--bg-2); color: var(--ink); border-color: var(--ink-2); }
-
-/* main â€” chat / empty / clarify */
+/* main â€” chat / empty */
 .cx__main {
   display: flex; flex-direction: column;
   min-width: 0; min-height: 0;
@@ -1892,10 +1830,14 @@ h2.display {
 
 /* ---- empty state ---- */
 .cx__empty {
-  flex: 1;
-  display: grid;
-  place-items: center;
-  padding: clamp(1.5rem, 5vw, 4rem) clamp(16px, 4vw, 28px);
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: clamp(2.5rem, 9vh, 5.5rem) clamp(16px, 4vw, 28px) 3rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
 }
 .cx__empty-inner {
   width: 100%;
@@ -2160,8 +2102,6 @@ h2.display {
 
 /* ---- thread ---- */
 .cx__thread {
-  flex: 1;
-  overflow-y: auto;
   padding: clamp(20px, 4vw, 40px) clamp(16px, 4vw, 28px) 20px;
 }
 .cx__thread-inner {
@@ -2306,9 +2246,9 @@ h2.display {
 .cx__thinking i:nth-child(2) { animation-delay: 0.2s; }
 .cx__thinking i:nth-child(3) { animation-delay: 0.4s; }
 @keyframes cx-blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
-/* ---- package + asset cards ---- */
+/* ---- package + asset rows ---- */
 .cx__pack {
-  display: none;
+  display: block;
   margin-top: 16px;
   border: 1.5px solid var(--line);
   border-radius: var(--r);
@@ -2396,9 +2336,11 @@ h2.display {
 
 /* ---- composer dock ---- */
 .cx__composer-dock {
-  flex: none;
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
   padding: 14px clamp(16px, 4vw, 28px) 20px;
-  background: linear-gradient(to top, var(--bg) 60%, transparent);
+  background: linear-gradient(to top, var(--bg) 68%, transparent);
 }
 .cx__composer-wrap { max-width: 780px; margin: 0 auto; }
 
@@ -2716,12 +2658,7 @@ h2.display {
 .cx__phase-detail { font-family: var(--font-ui); font-weight: 500; font-size: 0.84rem; line-height: 1.5; color: var(--ink-2); }
 
 @media (max-width: 860px) {
-  .cx-shell { padding: 0; align-items: stretch; }
-  .cx { height: 100vh; max-width: 100%; border-radius: 0; border: 0; box-shadow: none; }
-  .cx__body { grid-template-columns: 1fr; }
-  .cx__side { display: none; }
-  .cx__pack { display: block; }
-  .cx__setup-grid { grid-template-columns: 1fr; }
+  .cx-top__status { display: none; }
 }
 
 @media (max-width: 640px) {

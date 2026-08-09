@@ -1,6 +1,6 @@
-// Client types + API helpers for the Werk workspace. The server owns the
-// canonical workspace block; the browser keeps only the user's request and
-// visible open inputs.
+// Client types + API helpers for the Werk workspace. One request goes to the
+// server and the whole package comes back; the browser keeps only that request
+// and the open inputs the server could not resolve.
 
 export type AssetKind = "deck" | "document" | "sheet" | "agenda" | "actions" | "timeline"
 export type RenderFormat = "md" | "pdf" | "pptx" | "xlsx"
@@ -16,13 +16,6 @@ export interface PackageBrief {
 }
 
 export interface PackagePlan { packageName: string; packageTitle: string; reply: string; brief: PackageBrief; assets: PlanAsset[] }
-export interface ClarifyQuestion { key: string; question: string; placeholder?: string; required?: boolean }
-export interface ClarifyResult { mode: "clarify" | "ready"; reply: string; questions: ClarifyQuestion[] }
-
-export interface WorkspaceContext {
-  organizationName: string; organizationDescription: string; workspacePurpose: string
-  defaultAudience?: string; toneAndConstraints?: string; additionalContext?: string
-}
 
 export interface Slide { eyebrow: string; title: string; bullets: string[] }
 export interface DocSection { heading: string; body: string[] }
@@ -84,25 +77,8 @@ async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): P
   return (await res.json()) as T
 }
 
-export function clarify(request: string, workspaceContext: WorkspaceContext, openInputs: string[] = [], signal?: AbortSignal): Promise<ClarifyResult> {
-  return postJson("/api/clarify", { request, workspaceContext, openInputs }, signal)
-}
-
-export function planPackage(request: string, workspaceContext: WorkspaceContext, openInputs: string[] = [], signal?: AbortSignal): Promise<PackagePlan> {
-  return postJson("/api/plan", { request, workspaceContext, openInputs }, signal)
-}
-
-export function buildEnrichedRequest(request: string, questions: ClarifyQuestion[], answers: Record<string, string>): string {
-  const lines = questions.map((q) => ({ q, a: (answers[q.key] ?? "").trim() })).filter((x) => x.a).map((x) => `- ${x.q.question} ${x.a}`)
-  return lines.length ? `${request.trim()}\n\nContext:\n${lines.join("\n")}` : request.trim()
-}
-
-export function buildOpenInputs(questions: ClarifyQuestion[], answers: Record<string, string>): string[] {
-  return questions.filter((q) => !(answers[q.key] ?? "").trim()).map((q) => `Needs your input: ${q.question}`)
-}
-
-export async function streamGenerate(request: string, workspaceContext: WorkspaceContext, plan: PackagePlan, openInputs: string[], onEvent: (event: GenerateEvent) => void, signal?: AbortSignal): Promise<void> {
-  const res = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ request, workspaceContext, plan, openInputs }), signal })
+export async function streamGenerate(request: string, openInputs: string[], onEvent: (event: GenerateEvent) => void, signal?: AbortSignal): Promise<void> {
+  const res = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ request, openInputs }), signal })
   if (!res.ok || !res.body) {
     let message = `Request failed (${res.status})`
     try { message = (await res.json()).error ?? message } catch { /* keep default */ }
@@ -120,8 +96,8 @@ export async function streamGenerate(request: string, workspaceContext: Workspac
   }
 }
 
-export function regenerateAsset(asset: PlanAsset, request: string, workspaceContext: WorkspaceContext, brief: PackageBrief, openInputs: string[], previousDraft?: AssetDraft, revisionInstruction?: string, signal?: AbortSignal): Promise<AssetDraft> {
-  return postJson("/api/draft", { kind: asset.kind, title: asset.title, assetPlan: asset, request, workspaceContext, brief, openInputs, previousDraft, revisionInstruction }, signal)
+export function regenerateAsset(asset: PlanAsset, request: string, brief: PackageBrief, openInputs: string[], previousDraft?: AssetDraft, revisionInstruction?: string, signal?: AbortSignal): Promise<AssetDraft> {
+  return postJson("/api/draft", { kind: asset.kind, title: asset.title, assetPlan: asset, request, brief, openInputs, previousDraft, revisionInstruction }, signal)
 }
 
 export async function downloadAsset(draft: AssetDraft, format: RenderFormat): Promise<void> {

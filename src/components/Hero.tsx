@@ -9,16 +9,16 @@ export default function Hero({ onLaunch }: HeroProps) {
       <div className="container hero__inner">
         <div className="hero__copy">
           <span className="eyebrow eyebrow--center reveal" style={{ transitionDelay: "40ms" }}>
-            Professional workspace
+            One prompt. One package.
           </span>
           <h1 className="display hero__title reveal" style={{ transitionDelay: "90ms" }}>
-            One request.
+            Business-ready files
             <br />
-            <em>One curated stack.</em>
+            <em>from a single request.</em>
           </h1>
           <p className="lead hero__sub reveal" style={{ transitionDelay: "140ms" }}>
-            Describe the outcome in plain language. Werk suggests the useful documents,
-            plans, and trackers, then lets you review them before export.
+            Describe what you need in plain language. Werk decides which outputs genuinely help,
+            writes them all, and delivers the finished package.
           </p>
           <div className="hero__cta reveal" style={{ transitionDelay: "190ms" }}>
             <button className="btn btn--primary btn--lg" onClick={onLaunch}>
