@@ -1,0 +1,12 @@
+node_modules
+**/node_modules
+dist
+server/dist
+*.tsbuildinfo
+*.log
+.git
+.env*
+!.env.example
+server/.env*
+!server/.env.example
+.shots
